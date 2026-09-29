@@ -363,6 +363,74 @@ Check the browser with `opendot verify-image`, which opens a local page with
 no network, and with `opendot browser check --url https://example.com`, which
 opens a real page with the sandbox settings from your config.
 
+## Connectors and FactIQ
+
+**Work steps can read from MCP servers ("connectors") through a gateway on the
+host. The host holds the connector's key; the step container never sees it.**
+Connectors are off until you list them in `opendot.toml`:
+
+```toml
+[[mcp_servers]]
+name = "docs"
+url = "https://mcp.example.com/mcp"   # or: command = ["some-mcp-server", "--stdio"]
+auth = "bearer_env"                   # "none", "bearer_env" or "oauth"
+auth_env = "DOCS_MCP_TOKEN"           # read on the host, for bearer_env
+tools = [
+  { name = "search", mode = "read" },
+  { name = "create_note", mode = "write" },
+]
+```
+
+- For each step the host starts one gateway per connector on a Unix socket in
+  the step's run folder, and mounts that folder read-only at `/opendot/mcp`. A
+  small script in the container relays the model's MCP client to the socket.
+- The gateway lists and runs only the tools marked `read`. Any other tool name
+  is refused. Every call is written to the database with its arguments, its
+  status, its size and its duration. `opendot connectors calls` shows them.
+- A tool marked `write` is not callable from the step. It becomes an action
+  named `mcp.<server>.<tool>`. The model proposes it with the arguments, and
+  it goes through the rules, the reviewer and your approval like any other
+  outward action. Its floor is "ask". The host calls the tool only after the
+  approval, with the exact arguments that were approved.
+- Large results are cut before they reach the model. A call that takes too
+  long is stopped.
+- `opendot connectors list`, `login <name>`, `logout <name>` and `test <name>`
+  show the connectors, sign in to one that uses OAuth (the tokens are kept in
+  the OpenDot database on the host), remove a sign-in, and check that the
+  allowed tools exist on the server.
+
+**FactIQ is built in as a preset.** [FactIQ](https://factiq.com) serves public
+economic and financial data over MCP at `https://api.factiq.com/mcp`. Turn it
+on when you create the config:
+
+```sh
+uv run opendot init --with-factiq
+```
+
+or add it by hand:
+
+```toml
+[factiq]
+enabled = true
+# The other settings and their defaults:
+# auth = "bearer_env"          # or "oauth", then: opendot connectors login factiq
+# api_key_env = "FACTIQ_API_KEY"
+# instructions = true
+# feedback = false             # true adds send_feedback as an action that asks first
+```
+
+- With `auth = "bearer_env"`, create an API key in your FactIQ settings and put
+  it in `FACTIQ_API_KEY` on the host.
+- The preset allows FactIQ's read tools. `send_feedback` is the only tool that
+  sends something, and it is off unless `feedback = true`.
+- With `instructions = true`, OpenDot downloads the skill and reference files
+  from the public [factiq-plugin](https://github.com/defog-ai/factiq-plugin)
+  repository at a fixed commit, keeps only the skill, reference and script
+  files, and mounts them read-only at `/opendot/instructions/factiq`. The
+  plugin's `LICENSE` (MIT) is kept next to them with a `SOURCE.md` that names
+  the repository and commit. `opendot connectors fetch-instructions --force`
+  downloads them again. If the download fails, steps run without them.
+
 ## Development
 
 ```sh
