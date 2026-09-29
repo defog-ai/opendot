@@ -73,7 +73,7 @@ that listen on the Docker bridge address of your machine. The model CLIs need
 this to reach their own API.
 
 If you set `sandbox.network = "none"`, the container has no network, and the
-Codex and Claude Code CLIs cannot reach their API, so steps fail. You can create
+model CLIs cannot reach their API, so steps fail. You can create
 your own Docker network that only allows the model API (for example, through an
 egress proxy) and put its name in `sandbox.network`. OpenDot does not ship such
 a network. `network = "host"` and `network = "container:<name>"` are
@@ -97,6 +97,11 @@ A step needs the login of its own CLI:
 - **Claude Code:** OpenDot passes the variable named in
   `backend.claude_code.token_env` (default `CLAUDE_CODE_OAUTH_TOKEN`) into the
   container.
+- **opencode:** OpenDot copies only the entry for the provider in the model
+  name from your opencode login file (`backend.opencode.auth_file`) into the
+  session folder, and deletes it when the step ends. A refreshed OAuth login is
+  copied back only when it keeps the same fields and your own file did not
+  change during the step. A changed API key is never copied back.
 
 Code that runs in the container can read that login and, with network access,
 send it elsewhere. Use a login that you can revoke, and revoke it if you think a
@@ -107,7 +112,8 @@ spending limit over your main account password.
 
 The reviewer is a model CLI too. Codex review steps can still run shell commands
 inside their container. The work folder is read-only in review steps and no host
-variables are passed, but the network follows your config.
+variables are passed, but the network follows your config. Claude Code and
+opencode review steps get no tools.
 
 ### The reviewer is a model
 

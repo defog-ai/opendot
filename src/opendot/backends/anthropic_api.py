@@ -1,6 +1,6 @@
 """A backend that calls the Anthropic Messages API directly. Planned for v0.2.
 
-v0.1 runs every step through a CLI inside a container (Codex or Claude Code).
+v0.1 runs every step through a CLI inside a container (Codex, Claude Code or opencode).
 A direct API backend needs its own tool loop and sandboxed tool execution, which
 are not built yet.
 """

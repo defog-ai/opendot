@@ -40,6 +40,12 @@ payload.
   from host variables and OAuth sign-in are supported. A connector that runs a
   program on the host needs `allow_host_command = true`. A connector address
   must use https, except for `127.0.0.1`, `localhost` and `::1`.
+- An opencode backend (`kind = "opencode"`), so a step can use any provider
+  that opencode supports, such as OpenRouter or an opencode plan. The model
+  name is `provider/model`. Only the login for that provider is copied into
+  the container, and it is deleted when the step ends. Work steps get the
+  browser and connectors like the other backends; review and reflect steps
+  get no tools.
 - FactIQ as a built-in connector preset (`[factiq]`, `opendot init
   --with-factiq`) for `https://api.factiq.com/mcp`, with the skill files of the
   public factiq-plugin repository mounted read-only.
@@ -57,6 +63,9 @@ payload.
 
 ### Changed
 
+- The README is rewritten for new users: what OpenDot can do, which
+  subscriptions it can use, how to pick models, and an animation of two tasks.
+  The full details moved to `docs/how-it-works.md` and `docs/features.md`.
 - The work prompt now names `/work` as the writable working folder. It named a
   folder that does not exist before.
 - `sandbox.env_allowlist` may not name the GitHub token variable or a
@@ -101,4 +110,5 @@ First public release.
 
 ### Known limits
 
-See "Not yet" and "Known limits" in the README, and SECURITY.md.
+See "Not built yet" and "Known limits" in docs/how-it-works.md, and
+SECURITY.md.
