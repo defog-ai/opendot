@@ -250,6 +250,45 @@ These are not built yet:
   minute, and expect at most 20 active threads to be read on each pass.
 - **Replies from the fake backend are scripted.** Use it for tests and the demo.
 
+## Browser
+
+**Work steps can use a headless Chromium browser, which runs inside the step
+container and nowhere else.** It is off by default. Turn it on in
+`opendot.toml`:
+
+```toml
+[browser]
+enabled = true
+# The other settings and their defaults:
+# viewport = "1280x800"
+# shm_size = "1g"
+# allowed_origins = []
+```
+
+- The step image holds Chromium and the Playwright MCP server
+  (`@playwright/mcp` 0.0.83). Each work step gets one MCP server named
+  `browser`. The model may call only the tools in `browser.tools`. By default
+  that list leaves out the tools that run page scripts or code
+  (`browser_evaluate`, `browser_run_code_unsafe`), file upload and form filling. Codex hides the other tools. Claude Code refuses them.
+- Screenshots and page snapshots taken without a file name are saved in
+  `/opendot/run/artifacts`. That folder is `runs/task-<id>/<step token>/artifacts`
+  under the state folder, so you can open the files after the step.
+- The browser starts with an empty profile in memory. It has no cookies, no
+  saved logins and no host credentials.
+- The browser uses the network of the step container (`sandbox.network`). That
+  network is the security boundary. `browser.allowed_origins` is passed to
+  Playwright, but it does not cover redirects and is not a boundary. With
+  `sandbox.network = "none"` the browser cannot open web pages.
+- Chromium's own sandbox is off. The container drops every Linux capability,
+  and Chromium cannot build its sandbox without them. The container is the
+  boundary.
+- Page text is untrusted. The model reads it as data. Anything outward still
+  goes through actions, rules, the reviewer and your approval.
+
+Check the browser with `opendot verify-image`, which opens a local page with
+no network, and with `opendot browser check --url https://example.com`, which
+opens a real page with the sandbox settings from your config.
+
 ## Development
 
 ```sh

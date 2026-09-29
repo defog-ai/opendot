@@ -144,8 +144,9 @@ Docker from a snap package refuses the `no-new-privileges` option. To use it, se
 mounts outside `/tmp`. Without that option, a setuid program inside the image
 could take the user id of its owner (usually root) inside the container. Every capability is
 still dropped, so that owner has no extra kernel privileges, and the root file
-system stays read-only. This setting is on by default; turn it off only when
-your Docker requires it.
+system stays read-only. The step image is built with every setuid and setgid bit
+removed, and `opendot verify-image` reports any such file it finds. This setting
+is on by default; turn it off only when your Docker requires it.
 
 ## Files OpenDot writes
 
