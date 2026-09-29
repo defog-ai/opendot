@@ -250,6 +250,80 @@ These are not built yet:
   minute, and expect at most 20 active threads to be read on each pass.
 - **Replies from the fake backend are scripted.** Use it for tests and the demo.
 
+## Pull requests
+
+**OpenDot can push a branch, open a pull request, open an issue and comment on
+an issue. The model only edits files; the host commits, checks and publishes,
+and every one of these is an action that goes through rules, review and your
+approval.** It is off until you add a repository:
+
+```toml
+[github]
+# The host reads the token from this variable. It never enters a container.
+token_env = "OPENDOT_GITHUB_TOKEN"
+
+[[repositories]]
+name = "app"
+remote = "https://github.com/example/app.git"
+checks = ["uv run pytest -q"]
+```
+
+Set `OPENDOT_GITHUB_TOKEN` to a fine-grained token that can write contents,
+pull requests and issues of that repository only. `opendot doctor` checks that
+git is installed, the token is set and each remote is on GitHub.
+
+How it works:
+
+1. **Each task gets its own copy.** Before the first work step the host fetches
+   a bare clone of the default branch (`repos/<name>` under the state root),
+   copies it to `worktrees/task-<id>/<name>`, creates the branch
+   `opendot/task-<id>` and runs the `prepare` commands in a sandbox container.
+   The copy is mounted at `/opendot/repos/<name>`. Its `.git` folder is
+   read-only in the container, so the model cannot commit, push or change a
+   remote.
+2. **The host builds the action.** When the model proposes `github.push_branch`
+   or `github.open_pr`, the host commits the files (with git hooks, the host
+   user's git config and submodules switched off), refuses nested `.git`
+   folders, files that match `github.forbidden_files`, files larger than
+   `github.max_file_kib` and symbolic links that point outside the repository,
+   then runs the `checks` in a separate container on `check_network` (`none`
+   by default). A failed check refuses the action. A check that changes files
+   also refuses it. The action shows the commit, the tree hash, the changed
+   files, the diff (first 20,000 characters) and the check output.
+3. **Public repositories get a text check.** The host asks GitHub whether the
+   repository is public. If GitHub does not answer, the action is refused. For
+   a public repository, the action is refused when the added lines, file names,
+   commit messages, title or body contain a home-folder path, an email address
+   outside the example domains, text shaped like a token, a link to a coding
+   session or a `github.private_markers` entry. If the repository is public and
+   `public = false`, the host refuses every action for it.
+4. **Publishing happens only after approval.** Push and pull request actions
+   ask you every time; that is their floor. Issues and comments ask by default,
+   and a rule can lower them to `preapproved`, but no further. Before it
+   pushes, the host checks that the copy still holds the approved commit and
+   tree, and that the repository is still public or private as it was. It
+   never force-pushes and never pushes to the default branch.
+5. **Retries do not publish twice.** Each pull request, issue and comment
+   carries a hidden marker made from its content. A retry finds the earlier
+   result through the marker, first in the database and then on GitHub. A new
+   commit on a task that already has a pull request is pushed to the same
+   pull request.
+
+Commands: `opendot github repos`, `fetch`, `copies`, `publications`,
+`prune` (deletes the copies of finished tasks) and `reconcile` (records pull
+requests and issues that were merged or closed).
+
+Limits:
+
+- A check that needs the network needs `check_network` set to a Docker network
+  that can reach it. The check container gets no token and no host variables.
+- Files that `prepare` writes into the copy are committed unless the
+  repository's `.gitignore` covers them.
+- The text check matches patterns. It is a guard against mistakes, not a
+  guarantee. Review the diff before you approve.
+- An ssh remote uses the host user's ssh agent for fetch and push. An https
+  remote uses the token.
+
 ## Browser
 
 **Work steps can use a headless Chromium browser, which runs inside the step
