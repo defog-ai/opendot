@@ -154,7 +154,8 @@ def test_config_fixture(config, state_root):
 
 def test_example_file_matches_defaults():
     data = tomllib.loads(EXAMPLE.read_text(encoding="utf-8"))
-    assert data == {k: v for k, v in DEFAULTS.items() if k != "rules"}
+    table_lists = {"rules", "repositories", "mcp_servers"}
+    assert data == {k: v for k, v in DEFAULTS.items() if k not in table_lists}
     loaded = Config.load(EXAMPLE, env={})
     assert loaded == replace(Config.from_dict({}, env={}), source_path=EXAMPLE)
 

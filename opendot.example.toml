@@ -87,6 +87,11 @@ env_allowlist = []
 # Host folders mounted read-only into work steps, for example
 # readonly_mounts = [{ host = "~/reference", container = "/evidence/reference" }]
 readonly_mounts = []
+# Start step containers with --security-opt no-new-privileges, which stops a
+# process from gaining rights through setuid programs. Docker installed as a snap
+# cannot start containers with this option; set false there. `opendot doctor`
+# detects that case and explains the trade-off.
+no_new_privileges = true
 
 [channels.cli]
 # Accept tasks from `opendot task` on this machine.
@@ -111,3 +116,107 @@ allowed_users = []
 # kind = "note.write"
 # target = "*"
 # level = "ask"
+
+# ---------------------------------------------------------------------------
+# Pull requests (v0.2). The host keeps the GitHub token. The model edits a copy
+# of the repository; the host runs the checks, commits, pushes and opens the
+# pull request only after the action is approved.
+# ---------------------------------------------------------------------------
+
+[github]
+# Name of the host variable that holds a GitHub token. It never enters a container.
+token_env = "OPENDOT_GITHUB_TOKEN"
+# GitHub REST API address. Change it for GitHub Enterprise Server.
+api_url = "https://api.github.com"
+# Git host that repository remotes must name for GitHub actions.
+host = "github.com"
+# Commit author. An empty email means the token owner's GitHub no-reply address.
+author_name = "OpenDot"
+author_email = ""
+# Commit committer. Empty means the same as the author.
+committer_name = ""
+committer_email = ""
+# SSH private key file used to sign commits. Empty means unsigned commits.
+signing_key = ""
+# Prefix for branches the host creates, followed by task-<id>.
+branch_prefix = "opendot/"
+# Extra literal strings that may not appear in a push to a public repository.
+# The host always also looks for home-folder paths, email addresses outside
+# example domains, and text shaped like keys or tokens.
+private_markers = []
+# File names that may not be pushed (glob patterns matched against each path's name).
+forbidden_files = [".env", ".netrc", ".npmrc", ".pypirc", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa", "id_ecdsa", "id_ed25519"]
+# Largest file the host will push, in KiB.
+max_file_kib = 512
+# Wall-clock limit for one repository's checks, in minutes.
+check_minutes = 15
+
+# Repositories the model may work on. One table per repository.
+# [[repositories]]
+# name = "app"
+# remote = "https://github.com/example/app.git"
+# default_branch = "main"
+# Shell commands run in a sandbox container in the task's copy before the work step.
+# prepare = ["uv sync"]
+# Shell commands run in a separate sandbox container before a push. All must pass.
+# checks = ["uv run pytest -q"]
+# Docker network for the checks container.
+# check_network = "none"
+# Allow pushes while the repository is public on GitHub. When false, the host
+# refuses to push to a repository that GitHub reports as public.
+# public = false
+
+# ---------------------------------------------------------------------------
+# Built-in browser (v0.2). Chromium runs inside the step container with no saved
+# logins or cookies. Screenshots are saved where the host can read them.
+# ---------------------------------------------------------------------------
+
+[browser]
+enabled = false
+# Browser window size, WIDTHxHEIGHT.
+viewport = "1280x800"
+# Origins the browser may open. Empty means any. This is not a security
+# boundary; sandbox.network is.
+allowed_origins = []
+# Size of /dev/shm in the step container when the browser is on.
+shm_size = "1g"
+# Browser tools the model may call.
+tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_hover", "browser_type", "browser_press_key", "browser_select_option", "browser_wait_for", "browser_tabs", "browser_resize", "browser_close", "browser_console_messages", "browser_network_requests"]
+
+# ---------------------------------------------------------------------------
+# MCP connectors (v0.2). The host connects to each server and keeps its login.
+# The model sees only tools marked "read". Tools marked "write" become actions
+# named mcp.<server>.<tool>, which ask for approval by default.
+# ---------------------------------------------------------------------------
+
+[gateway]
+# Longest time one connector call may take, in seconds.
+call_timeout_seconds = 120
+# Largest connector result passed to the model, in KiB. Longer results are cut.
+max_result_kib = 512
+
+# [[mcp_servers]]
+# name = "docs"
+# url = "https://mcp.example.com/mcp"
+# auth = "bearer_env"          # "none", "bearer_env" or "oauth"
+# auth_env = "DOCS_MCP_TOKEN"  # host variable with the token, for bearer_env
+# tools = [
+#   { name = "search", mode = "read" },
+#   { name = "create_page", mode = "write" },
+# ]
+# A server can also be a command run on the host, instead of url:
+# command = ["docs-mcp-server", "--stdio"]
+
+# FactIQ economic and financial data, built in. `opendot init --with-factiq`
+# turns it on. It uses https://api.factiq.com/mcp with the read-only tools.
+[factiq]
+enabled = false
+url = "https://api.factiq.com/mcp"
+# "bearer_env": a FactIQ API key in the variable named by api_key_env.
+# "oauth": sign in once with `opendot connectors login factiq`.
+auth = "bearer_env"
+api_key_env = "FACTIQ_API_KEY"
+# Show the model the public FactIQ plugin skill files (MIT licence), read-only.
+instructions = true
+# Allow send_feedback, as an action that asks for approval first.
+feedback = false

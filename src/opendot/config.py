@@ -5,13 +5,15 @@ dots replaced by underscores and the whole name upper-cased, for example
 core.state_root -> OPENDOT_CORE_STATE_ROOT and
 backend.claude_code.token_env -> OPENDOT_BACKEND_CLAUDE_CODE_TOKEN_ENV.
 List values in the environment are comma-separated. Tables of tables
-([[rules]], sandbox.readonly_mounts) have no environment override.
+([[rules]], [[repositories]], [[mcp_servers]], sandbox.readonly_mounts) have no
+environment override.
 """
 
 from __future__ import annotations
 
 import copy
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -25,6 +27,71 @@ ENV_PREFIX = "OPENDOT_"
 CONFIG_ENV = "OPENDOT_CONFIG"
 DEFAULT_CONFIG_PATH = Path("~/.config/opendot/opendot.toml")
 BACKEND_ROLES = ("worker", "reviewer")
+
+# FactIQ preset. Only public facts: the connector address and the public plugin
+# repository, whose skill files are shared with the model read-only (MIT licence).
+FACTIQ_URL = "https://api.factiq.com/mcp"
+FACTIQ_PLUGIN_REPO = "https://github.com/defog-ai/factiq-plugin"
+FACTIQ_PLUGIN_COMMIT = "b427ec50acd6cd9258cbb7fd136f7ed2f0e02807"
+FACTIQ_READ_TOOLS = (
+    "get_data_catalog",
+    "search_datasets",
+    "describe_dataset",
+    "search_series",
+    "run_sql",
+    "get_series",
+    "get_market_data",
+    "get_geo_data",
+    "search_company_filings",
+    "search_earnings_transcripts",
+    "search_media_appearances",
+    "search_news",
+    "get_style_guides",
+)
+FACTIQ_WRITE_TOOLS = ("send_feedback",)
+
+# Browser tools the model may call. Left out on purpose: page scripts
+# (browser_evaluate, browser_run_code_unsafe), file upload, cookie and storage
+# tools, and saved login state.
+DEFAULT_BROWSER_TOOLS = [
+    "browser_navigate",
+    "browser_navigate_back",
+    "browser_snapshot",
+    "browser_take_screenshot",
+    "browser_click",
+    "browser_hover",
+    "browser_type",
+    "browser_press_key",
+    "browser_select_option",
+    "browser_wait_for",
+    "browser_tabs",
+    "browser_resize",
+    "browser_close",
+    "browser_console_messages",
+    "browser_network_requests",
+]
+
+DEFAULT_FORBIDDEN_FILES = [
+    ".env",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa",
+    "id_ecdsa",
+    "id_ed25519",
+]
+
+# Names of connectors and repositories. No dots (they are part of action kinds
+# such as mcp.<server>.<tool>) and no double underscore (Claude Code joins
+# server and tool names with one).
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+RESERVED_SERVER_NAMES = frozenset({"browser", "opendot"})
+MCP_AUTH_KINDS = ("none", "bearer_env", "oauth")
+MCP_TOOL_MODES = ("read", "write")
 
 DEFAULTS: dict[str, Any] = {
     "core": {
@@ -62,6 +129,7 @@ DEFAULTS: dict[str, Any] = {
         "home_size": "512m",
         "env_allowlist": [],
         "readonly_mounts": [],
+        "no_new_privileges": True,
     },
     "channels": {
         "cli": {"enabled": True, "user": "operator"},
@@ -73,10 +141,51 @@ DEFAULTS: dict[str, Any] = {
         },
     },
     "rules": [],
+    "github": {
+        "token_env": "OPENDOT_GITHUB_TOKEN",
+        "api_url": "https://api.github.com",
+        "host": "github.com",
+        "author_name": "OpenDot",
+        "author_email": "",
+        "committer_name": "",
+        "committer_email": "",
+        "signing_key": "",
+        "branch_prefix": "opendot/",
+        "private_markers": [],
+        "forbidden_files": list(DEFAULT_FORBIDDEN_FILES),
+        "max_file_kib": 512,
+        "check_minutes": 15,
+    },
+    "repositories": [],
+    "browser": {
+        "enabled": False,
+        "viewport": "1280x800",
+        "allowed_origins": [],
+        "shm_size": "1g",
+        "tools": list(DEFAULT_BROWSER_TOOLS),
+    },
+    "gateway": {
+        "call_timeout_seconds": 120,
+        "max_result_kib": 512,
+    },
+    "mcp_servers": [],
+    "factiq": {
+        "enabled": False,
+        "url": FACTIQ_URL,
+        "auth": "bearer_env",
+        "api_key_env": "FACTIQ_API_KEY",
+        "instructions": True,
+        "feedback": False,
+    },
 }
 
 # Keys whose values are lists of tables; everything else in DEFAULTS is a table or a scalar.
-_TABLE_LISTS = {("sandbox", "readonly_mounts"), ("rules",)}
+_TABLE_LISTS = {
+    ("sandbox", "readonly_mounts"),
+    ("rules",),
+    ("repositories",),
+    ("mcp_servers",),
+}
 
 
 class ConfigError(ValueError):
@@ -234,6 +343,9 @@ class SandboxConfig:
     home_size: str
     env_allowlist: list[str]
     readonly_mounts: list[ReadonlyMount]
+    # --security-opt no-new-privileges. Docker installed as a snap refuses to start
+    # containers with it ("operation not permitted"); set false there. See doctor.
+    no_new_privileges: bool = True
 
 
 @dataclass(frozen=True)
@@ -266,6 +378,117 @@ class RuleConfig:
 
 
 @dataclass(frozen=True)
+class GithubConfig:
+    token_env: str  # host variable holding the GitHub token; never enters a container
+    api_url: str
+    host: str  # the git host remotes must name for GitHub actions
+    author_name: str
+    author_email: str  # "" = the token owner's GitHub no-reply address
+    committer_name: str  # "" = author_name
+    committer_email: str  # "" = author_email
+    signing_key: Path | None  # SSH key file for signed commits; None = unsigned
+    branch_prefix: str
+    private_markers: list[str]  # extra literal strings refused in pushes to public repos
+    forbidden_files: list[str]  # glob patterns matched against each changed path's name
+    max_file_kib: int
+    check_minutes: int  # wall-clock limit for one repository's checks
+
+    def token(self, env: Mapping[str, str] | None = None) -> str | None:
+        source = os.environ if env is None else env
+        return source.get(self.token_env) or None
+
+
+@dataclass(frozen=True)
+class RepositoryConfig:
+    name: str
+    remote: str
+    default_branch: str
+    prepare: list[str]  # shell commands run in a sandbox container before the work step
+    checks: list[str]  # shell commands run in a separate sandbox container before a push
+    public: bool  # the operator allows pushes to this repository while it is public
+    check_network: str  # Docker network for the checks container; "none" by default
+
+    def github_slug(self, host: str) -> tuple[str, str] | None:
+        """(owner, repo) when the remote points at host, else None."""
+        return parse_github_remote(self.remote, host)
+
+
+@dataclass(frozen=True)
+class BrowserConfig:
+    enabled: bool
+    viewport: str  # "WIDTHxHEIGHT"
+    allowed_origins: list[str]  # passed to the browser; not a security boundary
+    shm_size: str  # /dev/shm size for the step container when the browser is on
+    tools: list[str]
+
+
+@dataclass(frozen=True)
+class GatewayConfig:
+    call_timeout_seconds: int
+    max_result_kib: int
+
+
+@dataclass(frozen=True)
+class McpToolConfig:
+    name: str
+    mode: str  # "read": the model may call it; "write": only as an action
+
+
+@dataclass(frozen=True)
+class McpServerConfig:
+    name: str
+    url: str  # streamable HTTP address, or ""
+    command: list[str]  # host command for a stdio server, or []
+    auth: str  # "none" | "bearer_env" | "oauth"
+    auth_env: str  # host variable holding the bearer token when auth = "bearer_env"
+    tools: list[McpToolConfig]
+    instructions: Path | None = None  # read-only folder shown to the model
+    preset: str = ""  # "factiq" for the built-in preset
+
+    @property
+    def read_tools(self) -> list[str]:
+        return [t.name for t in self.tools if t.mode == "read"]
+
+    @property
+    def write_tools(self) -> list[str]:
+        return [t.name for t in self.tools if t.mode == "write"]
+
+    def token(self, env: Mapping[str, str] | None = None) -> str | None:
+        if self.auth != "bearer_env":
+            return None
+        source = os.environ if env is None else env
+        return source.get(self.auth_env) or None
+
+
+@dataclass(frozen=True)
+class FactiqConfig:
+    enabled: bool
+    url: str
+    auth: str  # "bearer_env" (a FactIQ API key) or "oauth"
+    api_key_env: str
+    instructions: bool  # share the plugin's public skill files with the model
+    feedback: bool  # allow send_feedback, as an action that asks first
+
+
+_GITHUB_REMOTE = (
+    re.compile(r"^https://(?P<host>[^/@]+)/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"),
+    re.compile(
+        r"^ssh://git@(?P<host>[^/:]+)(?::\d+)?/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$"
+    ),
+    re.compile(r"^git@(?P<host>[^:]+):(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$"),
+)
+
+
+def parse_github_remote(remote: str, host: str) -> tuple[str, str] | None:
+    """Owner and repository name from an https, ssh:// or scp-style remote on host."""
+    for pattern in _GITHUB_REMOTE:
+        match = pattern.match(remote)
+        if match and match["host"].lower() == host.lower():
+            return match["owner"], match["repo"]
+    return None
+
+
+@dataclass(frozen=True)
 class Config:
     core: CoreConfig
     limits: LimitsConfig
@@ -280,6 +503,12 @@ class Config:
     slack: SlackChannelConfig
     rules: list[RuleConfig] = field(default_factory=list)
     source_path: Path | None = None
+    github: GithubConfig | None = None
+    repositories: list[RepositoryConfig] = field(default_factory=list)
+    browser: BrowserConfig | None = None
+    gateway: GatewayConfig | None = None
+    mcp_servers: list[McpServerConfig] = field(default_factory=list)
+    factiq: FactiqConfig | None = None
 
     # -- derived paths -------------------------------------------------------
 
@@ -303,11 +532,63 @@ class Config:
     def logs_dir(self) -> Path:
         return self.core.state_root / "logs"
 
+    @property
+    def repos_dir(self) -> Path:
+        """Control clones, one per repository. Never mounted into a container."""
+        return self.core.state_root / "repos"
+
+    @property
+    def worktrees_dir(self) -> Path:
+        """Per-task copies: worktrees/task-<id>/<repository>."""
+        return self.core.state_root / "worktrees"
+
+    @property
+    def connectors_dir(self) -> Path:
+        """Per-connector files shared with the model read-only, such as instructions."""
+        return self.core.state_root / "connectors"
+
     def ensure_directories(self) -> None:
-        """Create the state root, runs/ and logs/ with mode 0700; tighten them if they exist."""
-        for path in (self.state_root, self.runs_dir, self.logs_dir):
+        """Create the state root and its folders with mode 0700; tighten them if they exist."""
+        for path in (
+            self.state_root,
+            self.runs_dir,
+            self.logs_dir,
+            self.repos_dir,
+            self.worktrees_dir,
+            self.connectors_dir,
+        ):
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(path, 0o700)
+
+    def repository(self, name: str) -> RepositoryConfig | None:
+        for repo in self.repositories:
+            if repo.name == name:
+                return repo
+        return None
+
+    def connectors(self) -> list[McpServerConfig]:
+        """Every enabled MCP connector: the FactIQ preset first, then [[mcp_servers]]."""
+        result = []
+        if self.factiq is not None and self.factiq.enabled:
+            result.append(factiq_connector(self.factiq, self.connectors_dir))
+        result.extend(self.mcp_servers)
+        return result
+
+    def connector(self, name: str) -> McpServerConfig | None:
+        for server in self.connectors():
+            if server.name == name:
+                return server
+        return None
+
+    def secret_env_names(self) -> set[str]:
+        """Host variables that hold logins. None may enter a step container."""
+        names = {self.slack.bot_token_env, self.claude_code.token_env}
+        if self.github is not None:
+            names.add(self.github.token_env)
+        if self.factiq is not None:
+            names.add(self.factiq.api_key_env)
+        names.update(s.auth_env for s in self.mcp_servers if s.auth_env)
+        return names
 
     def backend_choice(self, role: str) -> BackendChoice:
         if role == "worker":
@@ -413,10 +694,29 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
         mounts.append(
             ReadonlyMount(host=_expand(str(item["host"])), container=str(item["container"]))
         )
+    if not isinstance(sandbox["no_new_privileges"], bool):
+        raise ConfigError("sandbox.no_new_privileges must be true or false")
+
+    github = _build_github(data["github"])
+    repositories = _build_repositories(data["repositories"])
+    browser = _build_browser(data["browser"])
+    gateway = data["gateway"]
+    _positive(gateway["call_timeout_seconds"], "gateway.call_timeout_seconds")
+    _positive(gateway["max_result_kib"], "gateway.max_result_kib")
+    factiq = _build_factiq(data["factiq"])
+    mcp_servers = _build_mcp_servers(data["mcp_servers"])
+    if factiq.enabled and any(s.name == "factiq" for s in mcp_servers):
+        raise ConfigError(
+            "mcp_servers has an entry named factiq while factiq.enabled is true; remove one of them"
+        )
+
     secret_names = {
         data["channels"]["slack"]["bot_token_env"],
         backend["claude_code"]["token_env"],
+        github.token_env,
+        factiq.api_key_env,
     }
+    secret_names.update(s.auth_env for s in mcp_servers if s.auth_env)
     for name in sandbox["env_allowlist"]:
         if not isinstance(name, str) or not name:
             raise ConfigError("sandbox.env_allowlist must hold variable names")
@@ -475,6 +775,7 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
             home_size=sandbox["home_size"],
             env_allowlist=list(sandbox["env_allowlist"]),
             readonly_mounts=mounts,
+            no_new_privileges=sandbox["no_new_privileges"],
         ),
         cli=CliChannelConfig(enabled=cli["enabled"], user=cli["user"]),
         slack=SlackChannelConfig(
@@ -485,4 +786,216 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
         ),
         rules=rules,
         source_path=source_path,
+        github=github,
+        repositories=repositories,
+        browser=browser,
+        gateway=GatewayConfig(
+            call_timeout_seconds=gateway["call_timeout_seconds"],
+            max_result_kib=gateway["max_result_kib"],
+        ),
+        mcp_servers=mcp_servers,
+        factiq=factiq,
     )
+
+
+def _string_list(value: Any, where: str) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ConfigError(f"{where} must be a list of strings")
+    return list(value)
+
+
+def _check_name(value: Any, where: str) -> str:
+    if not isinstance(value, str) or not NAME_PATTERN.match(value) or "__" in value:
+        raise ConfigError(
+            f"{where} must use only letters, digits, '-' and '_', without '__'; got {value!r}"
+        )
+    return value
+
+
+def _check_keys(item: Any, where: str, required: set[str], optional: set[str]) -> None:
+    if not isinstance(item, Mapping):
+        raise ConfigError(f"{where} must be a table")
+    keys = set(item)
+    if not required <= keys or not keys <= required | optional:
+        raise ConfigError(
+            f"{where} needs {sorted(required)} and may have {sorted(optional)}; got {sorted(keys)}"
+        )
+
+
+def _build_github(github: dict[str, Any]) -> GithubConfig:
+    if not github["token_env"]:
+        raise ConfigError("github.token_env must name a variable")
+    if not github["api_url"].startswith("https://"):
+        raise ConfigError("github.api_url must be an https:// address")
+    if not github["branch_prefix"] or github["branch_prefix"].startswith(("/", "-")):
+        raise ConfigError("github.branch_prefix must be a branch name prefix such as opendot/")
+    _positive(github["max_file_kib"], "github.max_file_kib")
+    _positive(github["check_minutes"], "github.check_minutes")
+    return GithubConfig(
+        token_env=github["token_env"],
+        api_url=github["api_url"].rstrip("/"),
+        host=github["host"],
+        author_name=github["author_name"],
+        author_email=github["author_email"],
+        committer_name=github["committer_name"],
+        committer_email=github["committer_email"],
+        signing_key=_expand(github["signing_key"]) if github["signing_key"] else None,
+        branch_prefix=github["branch_prefix"],
+        private_markers=_string_list(github["private_markers"], "github.private_markers"),
+        forbidden_files=_string_list(github["forbidden_files"], "github.forbidden_files"),
+        max_file_kib=github["max_file_kib"],
+        check_minutes=github["check_minutes"],
+    )
+
+
+def _build_repositories(items: list[Any]) -> list[RepositoryConfig]:
+    repos = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        where = f"repositories[{index}]"
+        _check_keys(
+            item,
+            where,
+            {"name", "remote"},
+            {"default_branch", "prepare", "checks", "public", "check_network"},
+        )
+        name = _check_name(item["name"], f"{where}.name")
+        if name in seen:
+            raise ConfigError(f"{where}.name {name!r} is used twice")
+        seen.add(name)
+        remote = item["remote"]
+        if not isinstance(remote, str) or not remote or remote.startswith("-"):
+            raise ConfigError(f"{where}.remote must be a git remote address")
+        public = item.get("public", False)
+        if not isinstance(public, bool):
+            raise ConfigError(f"{where}.public must be true or false")
+        branch = item.get("default_branch", "main")
+        if not isinstance(branch, str) or not branch or branch.startswith("-"):
+            raise ConfigError(f"{where}.default_branch must be a branch name")
+        network = item.get("check_network", "none")
+        if not isinstance(network, str) or not network:
+            raise ConfigError(f"{where}.check_network must name a Docker network, or 'none'")
+        if network == "host" or network.startswith("container:"):
+            raise ConfigError(f"{where}.check_network may not share another network namespace")
+        repos.append(
+            RepositoryConfig(
+                name=name,
+                remote=remote,
+                default_branch=branch,
+                prepare=_string_list(item.get("prepare", []), f"{where}.prepare"),
+                checks=_string_list(item.get("checks", []), f"{where}.checks"),
+                public=public,
+                check_network=network,
+            )
+        )
+    return repos
+
+
+def _build_browser(browser: dict[str, Any]) -> BrowserConfig:
+    if not re.match(r"^\d{2,5}x\d{2,5}$", browser["viewport"]):
+        raise ConfigError("browser.viewport must look like 1280x800")
+    tools = _string_list(browser["tools"], "browser.tools")
+    for tool in tools:
+        if not NAME_PATTERN.match(tool):
+            raise ConfigError(f"browser.tools has an invalid tool name {tool!r}")
+    return BrowserConfig(
+        enabled=browser["enabled"],
+        viewport=browser["viewport"],
+        allowed_origins=_string_list(browser["allowed_origins"], "browser.allowed_origins"),
+        shm_size=browser["shm_size"],
+        tools=tools,
+    )
+
+
+def _build_factiq(factiq: dict[str, Any]) -> FactiqConfig:
+    if factiq["auth"] not in ("bearer_env", "oauth"):
+        raise ConfigError("factiq.auth must be bearer_env or oauth")
+    if not factiq["url"].startswith("https://"):
+        raise ConfigError("factiq.url must be an https:// address")
+    if factiq["auth"] == "bearer_env" and not factiq["api_key_env"]:
+        raise ConfigError("factiq.api_key_env must name a variable")
+    return FactiqConfig(
+        enabled=factiq["enabled"],
+        url=factiq["url"],
+        auth=factiq["auth"],
+        api_key_env=factiq["api_key_env"],
+        instructions=factiq["instructions"],
+        feedback=factiq["feedback"],
+    )
+
+
+def factiq_connector(factiq: FactiqConfig, connectors_dir: Path) -> McpServerConfig:
+    """The FactIQ preset as an ordinary connector."""
+    tools = [McpToolConfig(name=t, mode="read") for t in FACTIQ_READ_TOOLS]
+    if factiq.feedback:
+        tools.extend(McpToolConfig(name=t, mode="write") for t in FACTIQ_WRITE_TOOLS)
+    return McpServerConfig(
+        name="factiq",
+        url=factiq.url,
+        command=[],
+        auth=factiq.auth,
+        auth_env=factiq.api_key_env if factiq.auth == "bearer_env" else "",
+        tools=tools,
+        instructions=connectors_dir / "factiq" / "instructions" if factiq.instructions else None,
+        preset="factiq",
+    )
+
+
+def _build_mcp_servers(items: list[Any]) -> list[McpServerConfig]:
+    servers = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        where = f"mcp_servers[{index}]"
+        _check_keys(item, where, {"name", "tools"}, {"url", "command", "auth", "auth_env"})
+        name = _check_name(item["name"], f"{where}.name")
+        if name in RESERVED_SERVER_NAMES:
+            raise ConfigError(f"{where}.name {name!r} is reserved")
+        if name in seen:
+            raise ConfigError(f"{where}.name {name!r} is used twice")
+        seen.add(name)
+        url = item.get("url", "")
+        command = item.get("command", [])
+        if not isinstance(url, str):
+            raise ConfigError(f"{where}.url must be a string")
+        command = _string_list(command, f"{where}.command")
+        if bool(url) == bool(command):
+            raise ConfigError(f"{where} needs exactly one of url and command")
+        if url and not url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+            raise ConfigError(f"{where}.url must be https://, or http:// on this machine")
+        auth = item.get("auth", "none")
+        if auth not in MCP_AUTH_KINDS:
+            raise ConfigError(f"{where}.auth must be one of {list(MCP_AUTH_KINDS)}")
+        auth_env = item.get("auth_env", "")
+        if not isinstance(auth_env, str):
+            raise ConfigError(f"{where}.auth_env must be a variable name")
+        if auth == "bearer_env" and not auth_env:
+            raise ConfigError(f"{where}.auth_env is needed when auth = 'bearer_env'")
+        if auth != "bearer_env" and auth_env:
+            raise ConfigError(f"{where}.auth_env is used only when auth = 'bearer_env'")
+        if auth == "oauth" and not url:
+            raise ConfigError(f"{where}.auth = 'oauth' needs a url")
+        if not isinstance(item["tools"], list) or not item["tools"]:
+            raise ConfigError(f"{where}.tools must list at least one tool")
+        tools = []
+        tool_names: set[str] = set()
+        for t_index, tool in enumerate(item["tools"]):
+            t_where = f"{where}.tools[{t_index}]"
+            _check_keys(tool, t_where, {"name", "mode"}, set())
+            tool_name = _check_name(tool["name"], f"{t_where}.name")
+            if tool_name in tool_names:
+                raise ConfigError(f"{t_where}.name {tool_name!r} is listed twice")
+            tool_names.add(tool_name)
+            if tool["mode"] not in MCP_TOOL_MODES:
+                raise ConfigError(f"{t_where}.mode must be read or write")
+            tools.append(McpToolConfig(name=tool_name, mode=tool["mode"]))
+        servers.append(
+            McpServerConfig(
+                name=name,
+                url=url,
+                command=command,
+                auth=auth,
+                auth_env=auth_env,
+                tools=tools,
+            )
+        )
+    return servers
