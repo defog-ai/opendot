@@ -195,6 +195,7 @@ BackendFactory = Callable[..., Backend]
 _BACKENDS: dict[str, str | BackendFactory] = {
     "codex": "opendot.backends.codex:CodexBackend",
     "claude_code": "opendot.backends.claude_code:ClaudeCodeBackend",
+    "opencode": "opendot.backends.opencode:OpencodeBackend",
     "anthropic_api": "opendot.backends.anthropic_api:AnthropicApiBackend",
     "fake": "opendot.backends.fake:FakeBackend",
 }

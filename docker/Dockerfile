@@ -15,7 +15,7 @@ RUN apt-get update \
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
-RUN npm install -g @openai/codex@0.159.0 @anthropic-ai/claude-code@2.1.284 \
+RUN npm install -g @openai/codex@0.159.0 @anthropic-ai/claude-code@2.1.284 opencode-ai@1.18.19 \
  && npm cache clean --force
 
 # The built-in browser: the Playwright MCP server (command playwright-mcp) and

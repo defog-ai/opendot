@@ -18,6 +18,7 @@ from opendot.sandbox import CONTAINER_CLI_HOME, CONTAINER_GID, CONTAINER_HOME, C
 # Public npm releases pinned in docker/Dockerfile. Keep the two in step.
 CODEX_VERSION = "0.159.0"
 CLAUDE_CODE_VERSION = "2.1.284"
+OPENCODE_VERSION = "1.18.19"
 PLAYWRIGHT_MCP_VERSION = "0.0.83"
 UV_VERSION = "0.12.20"
 
@@ -59,7 +60,16 @@ PLAYWRIGHT_MCP_TOOLS = frozenset(
 )
 
 # Executables every step container needs.
-REQUIRED_EXECUTABLES = ("codex", "claude", "git", "node", "python3", "uv", PLAYWRIGHT_MCP_COMMAND)
+REQUIRED_EXECUTABLES = (
+    "codex",
+    "claude",
+    "opencode",
+    "git",
+    "node",
+    "python3",
+    "uv",
+    PLAYWRIGHT_MCP_COMMAND,
+)
 
 # The page the image check opens. It needs no network, so the check runs with
 # --network none.

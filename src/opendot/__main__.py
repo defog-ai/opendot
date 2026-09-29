@@ -75,7 +75,7 @@ UNFINISHED = [
 DEMO_SCRIPT_NAME = "demo-script.json"
 DEMO_REPLY = (
     "Hello. This answer comes from the scripted fake backend, so no model ran. "
-    "Switch backend.worker.kind and backend.reviewer.kind to codex or claude_code "
+    "Switch backend.worker.kind and backend.reviewer.kind to codex, claude_code or opencode "
     "for real answers."
 )
 
@@ -180,8 +180,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     if path.exists() and not args.force:
         raise CliError(f"{path} already exists; pass --force to replace it")
     worker, reviewer = args.worker, args.reviewer
+    models = {"worker": args.worker_model, "reviewer": args.reviewer_model}
     if args.demo:
         worker = reviewer = "fake"
+        models = {"worker": "", "reviewer": ""}
+    for role, kind in (("worker", worker), ("reviewer", reviewer)):
+        if kind == "opencode" and "/" not in models[role].strip("/"):
+            raise CliError(
+                f"the opencode backend needs --{role}-model provider/model; "
+                "run `opencode models` to list them"
+            )
     state_root = Path(args.state_root).expanduser().resolve() if args.state_root else None
 
     lines = [
@@ -193,11 +201,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     lines += [
         "[backend.worker]",
         f"kind = {_toml_string(worker)}",
-        'model = ""',
+        f"model = {_toml_string(models['worker'])}",
         "",
         "[backend.reviewer]",
         f"kind = {_toml_string(reviewer)}",
-        'model = ""',
+        f"model = {_toml_string(models['reviewer'])}",
         "",
     ]
     if args.demo:
@@ -318,6 +326,35 @@ def doctor_findings(
                     "or use an API key",
                 )
             )
+    if "opencode" in kinds:
+        auth = config.opencode.auth_file
+        providers = sorted(
+            {
+                choice.model.partition("/")[0]
+                for choice in (config.worker_backend, config.reviewer_backend)
+                if choice.kind == "opencode"
+            }
+        )
+        try:
+            logins = json.loads(auth.read_bytes())
+        except (OSError, ValueError):
+            logins = None
+        if not isinstance(logins, dict):
+            found.append(
+                ("error", f"opencode login file {auth} is missing; run `opencode auth login`")
+            )
+        else:
+            for provider in providers:
+                if isinstance(logins.get(provider), dict):
+                    found.append(("ok", f"opencode login for {provider} in {auth}"))
+                else:
+                    found.append(
+                        (
+                            "error",
+                            f"opencode login file {auth} has no login for {provider}; "
+                            f"run `opencode auth login` and choose {provider}",
+                        )
+                    )
     if "fake" in kinds:
         script = config.fake.script
         if script is not None and not script.is_file():
@@ -325,7 +362,7 @@ def doctor_findings(
         else:
             found.append(("warn", "the fake backend is in use; no model will run"))
 
-    if kinds & {"codex", "claude_code"}:
+    if kinds & {"codex", "claude_code", "opencode"}:
         try:
             ok, message = _check_image(config, runner)
         except OSError:
@@ -872,11 +909,17 @@ def build_parser() -> argparse.ArgumentParser:
         sub.set_defaults(handler=handler)
         return sub
 
-    backend_kinds = ["codex", "claude_code", "fake"]
+    backend_kinds = ["codex", "claude_code", "opencode", "fake"]
     p = add("init", cmd_init)
     p.add_argument("--state-root", help="folder for the database, runs and logs")
     p.add_argument("--worker", choices=backend_kinds, default="codex")
     p.add_argument("--reviewer", choices=backend_kinds, default="claude_code")
+    p.add_argument(
+        "--worker-model", default="", help="model for the worker; opencode needs provider/model"
+    )
+    p.add_argument(
+        "--reviewer-model", default="", help="model for the reviewer; opencode needs provider/model"
+    )
     p.add_argument(
         "--demo",
         action="store_true",

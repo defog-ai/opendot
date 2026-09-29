@@ -38,9 +38,10 @@ denial_window = 50
 denials_in_window = 10
 
 [backend.worker]
-# Backend for the work and reflect steps: "codex", "claude_code" or "fake".
+# Backend for the work and reflect steps: "codex", "claude_code", "opencode" or "fake".
 kind = "codex"
-# Model name passed to the CLI. Empty means the CLI's own default.
+# Model name passed to the CLI. Empty means the CLI's own default. The opencode
+# backend needs "provider/model", as listed by `opencode models`.
 model = ""
 
 [backend.reviewer]
@@ -57,6 +58,11 @@ auth_file = "~/.codex/auth.json"
 # Name of the host variable that holds the Claude Code token (from
 # `claude setup-token`) or an API key. It is given only to the backend process.
 token_env = "CLAUDE_CODE_OAUTH_TOKEN"
+
+[backend.opencode]
+# The opencode login file (from `opencode auth login`). Only the login for the
+# provider of the configured model is copied into the container.
+auth_file = "~/.local/share/opencode/auth.json"
 
 [backend.fake]
 # JSON file of scripted outputs for the "fake" backend. Empty means no script.

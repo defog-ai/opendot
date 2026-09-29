@@ -87,7 +87,7 @@ class StepContext:
     step: Step
     store: Store
     config: Config
-    backend_kind: str  # "codex", "claude_code" or "fake"
+    backend_kind: str  # "codex", "claude_code", "opencode" or "fake"
 
 
 class StepExtension(Protocol):

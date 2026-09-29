@@ -117,6 +117,7 @@ DEFAULTS: dict[str, Any] = {
         "reviewer": {"kind": "claude_code", "model": ""},
         "codex": {"auth_file": "~/.codex/auth.json"},
         "claude_code": {"token_env": "CLAUDE_CODE_OAUTH_TOKEN"},
+        "opencode": {"auth_file": "~/.local/share/opencode/auth.json"},
         "fake": {"script": ""},
     },
     "sandbox": {
@@ -309,7 +310,7 @@ class ReviewerConfig:
 
 @dataclass(frozen=True)
 class BackendChoice:
-    kind: str  # "codex" | "claude_code" | "fake" | "anthropic_api"
+    kind: str  # "codex" | "claude_code" | "opencode" | "fake" | "anthropic_api"
     model: str  # "" = the CLI's own default model
 
 
@@ -321,6 +322,11 @@ class CodexConfig:
 @dataclass(frozen=True)
 class ClaudeCodeConfig:
     token_env: str  # host variable holding the token; passed only to the backend process
+
+
+@dataclass(frozen=True)
+class OpencodeConfig:
+    auth_file: Path  # only the entry for the model's provider is copied into the container
 
 
 @dataclass(frozen=True)
@@ -520,6 +526,7 @@ class Config:
     reviewer_backend: BackendChoice
     codex: CodexConfig
     claude_code: ClaudeCodeConfig
+    opencode: OpencodeConfig
     fake: FakeBackendConfig
     sandbox: SandboxConfig
     cli: CliChannelConfig
@@ -665,6 +672,11 @@ class Config:
         return _build(merged, source_path)
 
 
+def _is_provider_model(model: str) -> bool:
+    provider, slash, name = model.partition("/")
+    return bool(slash and provider and name)
+
+
 def _positive(value: int | float, name: str, *, allow_zero: bool = False) -> None:
     if value < 0 or (value == 0 and not allow_zero):
         raise ConfigError(f"{name} must be {'zero or more' if allow_zero else 'positive'}")
@@ -695,7 +707,13 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
         kind = backend[role]["kind"]
         if kind not in kinds:
             raise ConfigError(f"backend.{role}.kind must be one of {sorted(kinds)}, got {kind!r}")
-        choices[role] = BackendChoice(kind=kind, model=backend[role]["model"])
+        model = backend[role]["model"]
+        if kind == "opencode" and not _is_provider_model(model):
+            raise ConfigError(
+                f"backend.{role}.model must name a provider/model for opencode, "
+                f"for example 'openrouter/anthropic/claude-sonnet-5.5'; got {model!r}"
+            )
+        choices[role] = BackendChoice(kind=kind, model=model)
 
     sandbox = data["sandbox"]
     if sandbox["network"] == "host" or str(sandbox["network"]).startswith("container:"):
@@ -791,6 +809,7 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
         reviewer_backend=choices["reviewer"],
         codex=CodexConfig(auth_file=_expand(backend["codex"]["auth_file"])),
         claude_code=ClaudeCodeConfig(token_env=backend["claude_code"]["token_env"]),
+        opencode=OpencodeConfig(auth_file=_expand(backend["opencode"]["auth_file"])),
         fake=FakeBackendConfig(script=_expand(fake_script) if fake_script else None),
         sandbox=SandboxConfig(
             image=sandbox["image"],
