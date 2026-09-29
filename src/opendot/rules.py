@@ -71,6 +71,13 @@ FIXED_FLOORS: dict[str, Level] = {
     "access.*": Level.HAND_OFF,
     "rule.*": Level.ASK,
     "schedule.*": Level.ASK,
+    # v0.2: a push or a pull request always waits for a person's approval of
+    # the exact commit. An issue or a comment may run without asking only after
+    # the operator pre-approves it. A connector write tool always asks.
+    "github.push_branch": Level.ASK,
+    "github.open_pr": Level.ASK,
+    "github.*": Level.PREAPPROVED,
+    "mcp.*": Level.ASK,
 }
 
 

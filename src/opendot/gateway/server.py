@@ -30,9 +30,11 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from opendot import __version__
 from opendot.models import GatewayCallStatus, GatewayMode
+from opendot.redact import redact, secret_strings
 from opendot.sandbox import hand_to_container
 
 if TYPE_CHECKING:
@@ -438,11 +440,12 @@ class Gateway:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - one bad call must not end the connection
-                log.warning("gateway %s: %s failed: %s", name, method, exc)
+                message_text = self._scrub(self.connectors[name], str(exc))
+                log.warning("gateway %s: %s failed: %s", name, method, message_text)
                 return {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "error": {"code": -32603, "message": str(exc)[:500]},
+                    "error": {"code": -32603, "message": message_text[:500]},
                 }
 
         async def run_one(message: dict[str, Any]) -> None:
@@ -549,8 +552,8 @@ class Gateway:
             session = await upstream.get(INITIALIZE_WAIT_SECONDS)
             result = getattr(session, "initialize_result", None)
             upstream_text = getattr(result, "instructions", None)
-            if upstream_text:
-                text = f"{text}\n\n{upstream_text}"
+            if isinstance(upstream_text, str) and upstream_text:
+                text = f"{text}\n\n{self._scrub(server, upstream_text)}"
         return {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
@@ -571,7 +574,7 @@ class Gateway:
                 GatewayMode.READ,
                 {},
                 GatewayCallStatus.ERROR,
-                error=str(exc)[:1000],
+                error=self._scrub(server, str(exc))[:1000],
                 started=started,
             )
             return []
@@ -640,7 +643,9 @@ class Gateway:
             )
             raise
         except Exception as exc:  # noqa: BLE001 - reported to the model as a tool error
-            text = f"connector {server.name} failed on {tool}: {str(exc)[:500]}"
+            text = (
+                f"connector {server.name} failed on {tool}: {self._scrub(server, str(exc))[:500]}"
+            )
             self._log(
                 server,
                 tool,
@@ -669,6 +674,36 @@ class Gateway:
             started=started,
         )
         return sent
+
+    def _scrub(self, server: McpServerConfig, text: str) -> str:
+        """Remove the connector's credentials from text the model or the call log sees.
+
+        An upstream error can repeat the request: the address with its query
+        values, or a header. The bearer token, the stored OAuth tokens and client
+        secret, and the address's query values and password are masked, and the
+        address is shown without its query."""
+        secrets: list[str | None] = []
+        if server.auth == "bearer_env":
+            secrets.append(server.token(self.env))
+        if self._store is not None:
+            with contextlib.suppress(Exception):
+                token = self._store.get_connector_token(server.name)
+                if token is not None:
+                    secrets += [token.access_token, token.refresh_token]
+                    secrets += secret_strings(token.client_info)
+        if server.url:
+            parts = urlsplit(server.url)
+            secrets += [value for _, value in parse_qsl(parts.query)]
+            secrets.append(parts.password)
+            if parts.query or parts.fragment or parts.password:
+                host = parts.hostname or ""
+                if ":" in host:
+                    host = f"[{host}]"
+                if parts.port is not None:
+                    host = f"{host}:{parts.port}"
+                bare = urlunsplit((parts.scheme, host, parts.path, "", ""))
+                text = text.replace(server.url, bare)
+        return redact(text, secrets)
 
     def _log(
         self,

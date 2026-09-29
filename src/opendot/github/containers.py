@@ -2,7 +2,8 @@
 
 Each command runs in its own `docker run` with the step image and the same
 limits as a model step: no capabilities, a read-only root, a non-root user. The
-container has no /work folder, no CLI login and no environment variables. The
+container has no /work folder, no CLI login and no environment variables other than
+the git safe.directory setting for the copy. The
 task's copy is its only mount: /opendot/repos/<name>, writable, with the copy's
 .git folder read-only on top. The network is the one the caller names:
 sandbox.network for prepare commands, the repository's check_network for checks.
@@ -15,7 +16,7 @@ import os
 import secrets
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from opendot.backends import CommandRunner
     from opendot.config import Config
 
-__all__ = ["CommandOutcome", "run_repository_commands"]
+__all__ = ["CommandOutcome", "image_id", "run_repository_commands", "safe_directory_env"]
 
 OUTPUT_TAIL_CHARS = 2000
 DOCKER_CLIENT_VARIABLES = ("DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT")
@@ -55,8 +56,44 @@ class CommandOutcome:
         }
 
 
+def safe_directory_env(
+    directories: Sequence[str], existing: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """GIT_CONFIG_* values that mark each container repository folder as safe.
+
+    When the host runs as root, the copy's files are handed to the container user
+    but its read-only .git folder is not, so git in the container sees a repository
+    owned by another user and refuses to run. Git reads safe.directory from these
+    variables. Values already in existing are kept; the new ones follow them."""
+    env = dict(existing or {})
+    count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    for directory in directories:
+        env[f"GIT_CONFIG_KEY_{count}"] = "safe.directory"
+        env[f"GIT_CONFIG_VALUE_{count}"] = directory
+        count += 1
+    if count:
+        env["GIT_CONFIG_COUNT"] = str(count)
+    return env
+
+
 def _docker_env() -> dict[str, str]:
     return {name: os.environ[name] for name in DOCKER_CLIENT_VARIABLES if name in os.environ}
+
+
+def image_id(config: Config, runner: CommandRunner) -> str | None:
+    """The content id of the sandbox image (sha256:...), or None when Docker cannot say.
+
+    The image name can point at new content after a rebuild or a pull, so a cached
+    check result is tied to this id, not to the name."""
+    args = [config.sandbox.docker, "image", "inspect", "--format", "{{.Id}}", config.sandbox.image]
+    try:
+        result = runner.run(args, env=_docker_env(), timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    ident = (result.stdout or "").strip()
+    if result.returncode != 0 or not ident.startswith("sha256:") or len(ident.split()) != 1:
+        return None
+    return ident
 
 
 def run_repository_commands(
@@ -93,6 +130,7 @@ def run_repository_commands(
             session=None,
             work_writable=False,
             host_mounts=[mount],
+            fixed_env=safe_directory_env([mount.container]),
             workdir=f"{CONTAINER_REPOS}/{repository}",
         )
         started = time.monotonic()

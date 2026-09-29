@@ -319,6 +319,14 @@ def doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
         ok, detail = _login_state(config, server)
         results.append((f"connector {server.name} login", ok, detail))
         if server.command:
+            results.append(
+                (
+                    f"connector {server.name} runs on the host",
+                    True,
+                    f"{server.command[0]} runs as your user, outside the sandbox "
+                    "(allow_host_command = true)",
+                )
+            )
             found = shutil.which(server.command[0])
             results.append(
                 (

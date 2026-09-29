@@ -111,6 +111,7 @@ def test_mcp_servers_parse():
                 {
                     "name": "local",
                     "command": ["srv", "--stdio"],
+                    "allow_host_command": True,
                     "tools": [{"name": "t", "mode": "read"}],
                 },
             ]
@@ -150,12 +151,54 @@ def test_mcp_servers_parse():
             "auth": "bearer_env",
             "tools": [{"name": "t", "mode": "read"}],
         },
-        {"name": "a", "command": ["x"], "auth": "oauth", "tools": [{"name": "t", "mode": "read"}]},
+        {
+            "name": "a",
+            "command": ["x"],
+            "allow_host_command": True,
+            "auth": "oauth",
+            "tools": [{"name": "t", "mode": "read"}],
+        },
+        # A host command needs the operator's explicit consent.
+        {"name": "a", "command": ["x"], "tools": [{"name": "t", "mode": "read"}]},
+        {
+            "name": "a",
+            "url": "https://a.example.com",
+            "allow_host_command": True,
+            "tools": [{"name": "t", "mode": "read"}],
+        },
+        # Plain http only to this machine, judged by the host name, not a prefix.
+        {
+            "name": "a",
+            "url": "http://localhost.evil.example/mcp",
+            "tools": [{"name": "t", "mode": "read"}],
+        },
+        {
+            "name": "a",
+            "url": "http://127.0.0.1.attacker.example/",
+            "tools": [{"name": "t", "mode": "read"}],
+        },
+        {
+            "name": "a",
+            "url": "http://localhost" + "@evil.example/",
+            "tools": [{"name": "t", "mode": "read"}],
+        },
+        {"name": "a", "url": "ftp://localhost/", "tools": [{"name": "t", "mode": "read"}]},
     ],
 )
 def test_bad_mcp_servers_are_refused(server):
     with pytest.raises(ConfigError):
         Config.from_dict({"mcp_servers": [server]}, env={})
+
+
+@pytest.mark.parametrize(
+    "url", ["http://127.0.0.1:8080/mcp", "http://localhost/mcp", "http://[::1]:8080/"]
+)
+def test_local_http_connectors_are_accepted(url):
+    cfg = Config.from_dict(
+        {"mcp_servers": [{"name": "a", "url": url, "tools": [{"name": "t", "mode": "read"}]}]},
+        env={},
+    )
+    assert cfg.connector("a").url == url
 
 
 def test_factiq_preset():

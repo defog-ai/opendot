@@ -131,6 +131,7 @@ api_url = "https://api.github.com"
 # Git host that repository remotes must name for GitHub actions.
 host = "github.com"
 # Commit author. An empty email means the token owner's GitHub no-reply address.
+# Required when any repository has forge = "none".
 author_name = "OpenDot"
 author_email = ""
 # Commit committer. Empty means the same as the author.
@@ -150,6 +151,13 @@ forbidden_files = [".env", ".netrc", ".npmrc", ".pypirc", "*.pem", "*.key", "*.p
 max_file_kib = 512
 # Wall-clock limit for one repository's checks, in minutes.
 check_minutes = 15
+# Longest diff the approver is shown, in characters. A longer change is refused,
+# never cut, so the approver always sees all of it.
+max_diff_chars = 20000
+# Binary files cannot be read by the approver. By default a push that adds or
+# changes one is refused for a public repository. true allows it; the approver
+# then sees only the file's name and size.
+allow_binary_public = false
 
 # Repositories the model may work on. One table per repository.
 # [[repositories]]
@@ -165,6 +173,14 @@ check_minutes = 15
 # Allow pushes while the repository is public on GitHub. When false, the host
 # refuses to push to a repository that GitHub reports as public.
 # public = false
+# "github" (the default) or "none". With "none" the remote is a plain git
+# remote: the host makes no GitHub call and needs no token, and only
+# github.push_branch works (pull requests, issues and comments are refused).
+# forge = "github"
+# Required with forge = "none": "private" or "public". You state it; the host
+# cannot check it. "public" turns on the public text check. Leave it empty for
+# a GitHub repository, whose visibility the host asks GitHub for.
+# visibility = ""
 
 # ---------------------------------------------------------------------------
 # Built-in browser (v0.2). Chromium runs inside the step container with no saved
@@ -204,8 +220,11 @@ max_result_kib = 512
 #   { name = "search", mode = "read" },
 #   { name = "create_page", mode = "write" },
 # ]
-# A server can also be a command run on the host, instead of url:
+# A server can also be a command run on the host, instead of url. The command
+# runs as your user, outside the sandbox, with your files and network, so it
+# needs allow_host_command = true:
 # command = ["docs-mcp-server", "--stdio"]
+# allow_host_command = true
 
 # FactIQ economic and financial data, built in. `opendot init --with-factiq`
 # turns it on. It uses https://api.factiq.com/mcp with the read-only tools.

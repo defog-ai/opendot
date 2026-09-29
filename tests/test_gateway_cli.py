@@ -38,10 +38,8 @@ def downloads(monkeypatch) -> list[str]:
 
 
 def run(home: Path, *argv: str) -> int:
-    """Like opendot.__main__.main, with the gateway's commands added to the parser."""
+    """Like opendot.__main__.main; build_parser adds the gateway's commands."""
     parser = main_module.build_parser()
-    commands = next(a for a in parser._actions if a.dest == "command")
-    gateway_cli.register_cli(commands)
     args = parser.parse_args(["--config", str(home / "opendot.toml"), *argv])
     try:
         return args.handler(args)
@@ -113,6 +111,7 @@ state_root = "{home / "state"}"
 [[mcp_servers]]
 name = "local"
 command = ["opendot-no-such-command-xyz", "--stdio"]
+allow_host_command = true
 tools = [{{ name = "search", mode = "read" }}]
 
 [[mcp_servers]]
@@ -126,6 +125,8 @@ tools = [{{ name = "search", mode = "read" }}]
     config = load(home)
     checks = {name: (ok, detail) for name, ok, detail in gateway_cli.doctor_checks(config)}
     assert checks["connector local command"][0] is False
+    assert checks["connector local runs on the host"][0] is True
+    assert "outside the sandbox" in checks["connector local runs on the host"][1]
     assert checks["connector local login"][0] is True
     assert checks["connector remote login"] == (False, "run `opendot connectors login remote`")
     assert not config.db_path.exists()  # doctor creates nothing

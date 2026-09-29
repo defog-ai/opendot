@@ -372,6 +372,6 @@ def login(
         from opendot.gateway.upstream import list_remote_tools
 
         tools = anyio.run(list_remote_tools, server, provider)
-        if store.get_connector_token(server.name) is None:
+        if storage.fresh:  # still true until a new token is saved
             raise LoginError("the server answered without asking for a sign-in; nothing was stored")
         return tools

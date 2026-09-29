@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Any, Protocol
 
-from opendot.models import Mount, Step, StepResult
+from opendot.models import Mount, Step, StepPlan, StepResult
 
 if TYPE_CHECKING:
     from opendot.config import Config
@@ -72,6 +72,7 @@ class Backend(Protocol):
         *,
         limits: StepLimits | None = None,
         should_stop: Callable[[], bool] | None = None,
+        plan: StepPlan | None = None,
     ) -> StepResult:
         """Run one step and return its output.
 
@@ -84,6 +85,9 @@ class Backend(Protocol):
         limits: time and turn limits for this step.
         should_stop: polled while the step runs; when it returns True, stop the
             step and raise StepInterrupted.
+        plan: what the step extensions prepared for a work step (task folders,
+            MCP servers, fixed values, shared memory size), or None. A backend
+            passes plan.host_mounts through check_host_mounts before it uses them.
 
         Returns StepResult(output, thread_id, transcript_path, usage). The backend
         does not validate output against the schema; the host does. usage uses the

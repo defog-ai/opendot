@@ -200,7 +200,12 @@ def test_run_repository_commands_arguments(tmp_path: Path) -> None:
     assert f"src={copy / '.git'},dst=/opendot/repos/widget/.git,readonly" in mounts
     assert "/work" not in args
     envs = [args[i + 1] for i, a in enumerate(args) if a == "--env"]
-    assert envs == ["HOME=/opendot/home"]
+    assert envs == [  # HOME, and the copy marked safe for git (a root host keeps .git)
+        "HOME=/opendot/home",
+        "GIT_CONFIG_KEY_0=safe.directory",
+        "GIT_CONFIG_VALUE_0=/opendot/repos/widget",
+        "GIT_CONFIG_COUNT=1",
+    ]
 
 
 def test_run_repository_commands_stops_container_on_timeout(tmp_path: Path) -> None:
@@ -245,3 +250,12 @@ def test_run_repository_commands_refuses_copy_outside_worktrees(tmp_path: Path) 
             timeout_seconds=5,
             purpose="check",
         )
+
+
+def test_stat_counts_lines_per_file_from_the_patch() -> None:
+    patch = (
+        "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1,2 @@\n-old\n+new\n+--- not a header\n"
+        "diff --git a/g b/g\nnew file mode 100644\n--- /dev/null\n+++ b/g\n@@ -0,0 +1 @@\n"
+        "+x\rdiff --git a/h b/h\n"
+    )
+    assert g.stat_from_patch(patch) == "f | +2 -1\ng | +1 -0\n2 files, +3 -1"

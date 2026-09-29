@@ -35,19 +35,23 @@ from opendot.redact import redact
 
 __all__ = [
     "EMPTY_TREE",
+    "BlobInfo",
     "ChangedFile",
     "GitError",
     "Identity",
     "added_lines",
     "auth_env",
+    "blob_info",
     "changed_files",
     "check_changed_files",
     "commit_messages",
     "commit_worktree",
     "diff_stat",
     "diff_text",
+    "stat_from_patch",
     "find_nested_git",
     "git",
+    "git_bytes",
     "head_sha",
     "head_tree",
     "worktree_tree",
@@ -75,6 +79,10 @@ NETWORK_VARIABLES = ("SSH_AUTH_SOCK",)
 
 MODE_SYMLINK = "120000"
 MODE_GITLINK = "160000"
+
+# Git calls a file binary when its first 8000 bytes hold a NUL byte. The host makes
+# the same test on the stored content, so a .gitattributes file cannot change it.
+BINARY_SNIFF_BYTES = 8000
 
 
 class GitError(RuntimeError):
@@ -136,6 +144,26 @@ def git(
         raise GitError(f"git {args[0] if args else ''} took longer than {timeout:g} s") from None
     if completed.returncode != 0:
         detail = redact(completed.stderr.strip()[-2000:], secrets_)
+        raise GitError(f"git {args[0] if args else ''} failed: {detail}")
+    return completed.stdout
+
+
+def git_bytes(cwd: Path, *args: str, input_: bytes | None = None, timeout: float = 600) -> bytes:
+    """Run one local host git command and return its stdout as bytes. Raises GitError."""
+    argv = ["git", *SAFE_CONFIG, "-C", str(cwd), *args]
+    try:
+        completed = subprocess.run(
+            argv,
+            input=input_,
+            env=_base_env(),
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitError(f"git {args[0] if args else ''} took longer than {timeout:g} s") from None
+    if completed.returncode != 0:
+        detail = redact(completed.stderr.decode("utf-8", "replace").strip()[-2000:])
         raise GitError(f"git {args[0] if args else ''} failed: {detail}")
     return completed.stdout
 
@@ -245,6 +273,13 @@ class ChangedFile:
     path: str
     status: str  # A, M, D or T
     mode: str  # new mode, "000000" for a deleted file
+    old_sha: str = ""  # stored content before the change; all zeros for a new file
+    new_sha: str = ""  # stored content after the change; all zeros for a deleted file
+
+    @property
+    def content_sha(self) -> str:
+        """The content to judge the file by: the new one, or the old one for a deletion."""
+        return self.old_sha if self.status == "D" else self.new_sha
 
 
 def changed_files(copy: Path, base: str, head: str) -> list[ChangedFile]:
@@ -259,7 +294,53 @@ def changed_files(copy: Path, base: str, head: str) -> list[ChangedFile]:
         if not meta.startswith(":"):
             continue
         parts = meta[1:].split()
-        result.append(ChangedFile(path=path, status=parts[4][0], mode=parts[1]))
+        result.append(
+            ChangedFile(
+                path=path,
+                status=parts[4][0],
+                mode=parts[1],
+                old_sha=parts[2],
+                new_sha=parts[3],
+            )
+        )
+    return result
+
+
+@dataclass(frozen=True)
+class BlobInfo:
+    size: int
+    binary: bool  # a NUL byte in the first 8000 bytes, or too large to read
+
+
+def blob_info(copy: Path, shas: Sequence[str], *, read_limit: int) -> dict[str, BlobInfo]:
+    """Size and binary test of stored contents. A content larger than read_limit bytes
+    is not read and counts as binary, so it is never shown as text."""
+    wanted = sorted({sha for sha in shas if sha and set(sha) != {"0"}})
+    if not wanted:
+        return {}
+    sizes: dict[str, int] = {}
+    listing = git_bytes(
+        copy, "cat-file", "--batch-check", input_="".join(f"{sha}\n" for sha in wanted).encode()
+    )
+    for line in listing.decode("ascii", "replace").splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            sizes[parts[0]] = int(parts[2])
+    result = {sha: BlobInfo(size, True) for sha, size in sizes.items()}
+    readable = [sha for sha, size in sizes.items() if size <= read_limit]
+    if not readable:
+        return result
+    out = git_bytes(
+        copy, "cat-file", "--batch", input_="".join(f"{sha}\n" for sha in readable).encode()
+    )
+    position = 0
+    while position < len(out):
+        end = out.index(b"\n", position)
+        sha, _, size_text = out[position:end].decode("ascii").split()
+        size = int(size_text)
+        content = out[end + 1 : end + 1 + size]
+        result[sha] = BlobInfo(size, b"\0" in content[:BINARY_SNIFF_BYTES])
+        position = end + 1 + size + 1
     return result
 
 
@@ -319,13 +400,64 @@ def check_changed_files(
     return problems
 
 
-def diff_text(copy: Path, base: str, head: str) -> str:
-    """The full patch from base to head, binary files named only."""
-    return git(copy, "diff", "--no-color", "--no-ext-diff", "--no-textconv", base, head)
+def diff_text(copy: Path, base: str, head: str, *, leave_out: Sequence[str] = ()) -> str:
+    """The patch from base to head, every file shown as text.
+
+    --text makes git show a file even when a .gitattributes file in the copy marks
+    it as binary ("-diff"). --no-ext-diff and --no-textconv stop any program from
+    rewriting what is shown. The paths in leave_out (binary files, which the caller
+    lists by name and size instead) are left out. NUL bytes are removed and bytes
+    that are not UTF-8 are replaced, so the result is always printable text.
+    """
+    args = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", base, head]
+    if leave_out:
+        args += ["--", *(f":(exclude,literal){path}" for path in leave_out)]
+    out = git_bytes(copy, *args)
+    return out.decode("utf-8", "replace").replace("\0", "")
 
 
-def diff_stat(copy: Path, base: str, head: str) -> str:
-    return git(copy, "diff", "--no-color", "--stat=100", base, head).strip()
+def diff_stat(copy: Path, base: str, head: str, *, leave_out: Sequence[str] = ()) -> str:
+    """Added and removed line counts per file, counted from diff_text.
+
+    `git diff --stat` is not used: it follows a .gitattributes file in the copy even
+    with --text, so it would report a text file as binary."""
+    return stat_from_patch(diff_text(copy, base, head, leave_out=leave_out))
+
+
+def stat_from_patch(patch: str) -> str:
+    """One "name | +added -removed" line per file of a patch from diff_text."""
+    rows: list[tuple[str, int, int]] = []
+    in_hunk = False
+    # Split on newlines only: a carriage return inside a line must not start a new one.
+    for line in patch.split("\n"):
+        if line.startswith("diff --git "):
+            rows.append((_header_name(line[len("diff --git ") :]), 0, 0))
+            in_hunk = False
+        elif not rows:
+            continue
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and line.startswith("+"):
+            name, added, removed = rows[-1]
+            rows[-1] = (name, added + 1, removed)
+        elif in_hunk and line.startswith("-"):
+            name, added, removed = rows[-1]
+            rows[-1] = (name, added, removed + 1)
+    lines = [f"{name} | +{added} -{removed}" for name, added, removed in rows]
+    total_added = sum(r[1] for r in rows)
+    total_removed = sum(r[2] for r in rows)
+    lines.append(f"{len(rows)} files, +{total_added} -{total_removed}")
+    return "\n".join(lines)
+
+
+def _header_name(names: str) -> str:
+    """The path from "a/<path> b/<path>"; the whole text when git quoted the names."""
+    if names.startswith("a/") and not names.startswith('"'):
+        half = (len(names) - 1) // 2
+        left, right = names[:half], names[half + 1 :]
+        if names[half] == " " and right.startswith("b/") and left[2:] == right[2:]:
+            return right[2:]
+    return names
 
 
 def commit_messages(copy: Path, base: str, head: str) -> str:

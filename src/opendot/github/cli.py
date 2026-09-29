@@ -79,7 +79,7 @@ def cmd_copies(args: argparse.Namespace) -> int:
 def cmd_publications(args: argparse.Namespace) -> int:
     _, store = _open(args)
     for item in store.list_publications(task_id=args.task):
-        where = f"#{item.number}" if item.number else (item.branch or "")
+        where = f"#{item.number}" if item.number else (f":{item.branch}" if item.branch else "")
         print(
             f"{item.id}\ttask {item.task_id}\t{item.kind.value}\t{item.repository}{where}\t"
             f"{item.state.value}\t{item.url or ''}\t{item.error or ''}"
@@ -191,18 +191,29 @@ def doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
     results: list[tuple[str, bool, str]] = []
     git_path = shutil.which("git")
     results.append(("github: git", git_path is not None, git_path or "git is not on PATH"))
-    token = github.token()
-    results.append(
-        (
-            "github: token",
-            token is not None,
-            f"{github.token_env} is set" if token else f"{github.token_env} is not set",
+    if any(not repo.plain_git for repo in config.repositories):
+        token = github.token()
+        results.append(
+            (
+                "github: token",
+                token is not None,
+                f"{github.token_env} is set" if token else f"{github.token_env} is not set",
+            )
         )
-    )
     if github.signing_key is not None:
         ok = Path(github.signing_key).expanduser().is_file()
         results.append(("github: signing key", ok, str(github.signing_key)))
     for repo in config.repositories:
+        if repo.plain_git:
+            results.append(
+                (
+                    f"github: {repo.name} remote",
+                    True,
+                    f"plain git remote {repo.remote} (forge = 'none', stated visibility "
+                    f"{repo.visibility}; only push_branch works)",
+                )
+            )
+            continue
         slug = repo.github_slug(github.host)
         results.append(
             (

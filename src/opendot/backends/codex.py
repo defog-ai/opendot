@@ -45,7 +45,7 @@ from opendot.backends import (
     StepTimedOut,
     SubprocessRunner,
 )
-from opendot.models import Mount, Step, StepResult
+from opendot.models import Mount, Step, StepPlan, StepResult
 from opendot.proc import Deadline, LineReader
 from opendot.redact import redact, secret_strings, write_redacted
 from opendot.sandbox import (
@@ -54,8 +54,11 @@ from opendot.sandbox import (
     SandboxError,
     SessionDirs,
     adopt_session,
+    check_host_mounts,
     check_mounts,
+    check_plan_env,
     check_step_env,
+    codex_mcp_overrides,
     container_name,
     docker_run_args,
     hand_to_container,
@@ -180,11 +183,15 @@ class CodexBackend:
         *,
         limits: StepLimits | None = None,
         should_stop: Callable[[], bool] | None = None,
+        plan: StepPlan | None = None,
     ) -> StepResult:
         step = Step(step)
         try:
             env = check_step_env(step, env, self.config)
             mounts = check_mounts(step, mounts, self.config)
+            host_mounts = check_host_mounts(step, plan.host_mounts, self.config) if plan else []
+            plan_env = check_plan_env(plan.fixed_env) if plan else {}
+            mcp_args = codex_mcp_overrides(plan.mcp_servers) if plan else []
             session = (
                 open_session(self.config, KIND, resume_id)
                 if resume_id
@@ -214,12 +221,14 @@ class CodexBackend:
         args = docker_run_args(
             self.config.sandbox,
             name=name,
-            command=list(APP_SERVER_COMMAND),
+            command=[*APP_SERVER_COMMAND, *mcp_args],
             session=session,
             work_writable=step is not Step.REVIEW,
             mounts=mounts,
             env_names=sorted(env),
-            fixed_env={"CODEX_HOME": CONTAINER_CLI_HOME},
+            fixed_env={**plan_env, "CODEX_HOME": CONTAINER_CLI_HOME},
+            host_mounts=host_mounts,
+            shm_size=plan.shm_size if plan else "",
         )
         transcript = _Transcript()
         client: _AppServerClient | None = None

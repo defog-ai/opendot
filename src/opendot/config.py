@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from opendot.models import Level
@@ -155,6 +156,8 @@ DEFAULTS: dict[str, Any] = {
         "forbidden_files": list(DEFAULT_FORBIDDEN_FILES),
         "max_file_kib": 512,
         "check_minutes": 15,
+        "max_diff_chars": 20_000,
+        "allow_binary_public": False,
     },
     "repositories": [],
     "browser": {
@@ -392,6 +395,11 @@ class GithubConfig:
     forbidden_files: list[str]  # glob patterns matched against each changed path's name
     max_file_kib: int
     check_minutes: int  # wall-clock limit for one repository's checks
+    # The longest diff the approver is shown. A longer change is refused, never cut.
+    max_diff_chars: int = 20_000
+    # Off by default: allow files the approver cannot read (binary files) in a push
+    # to a public repository. The approver sees only their names and sizes.
+    allow_binary_public: bool = False
 
     def token(self, env: Mapping[str, str] | None = None) -> str | None:
         source = os.environ if env is None else env
@@ -407,9 +415,21 @@ class RepositoryConfig:
     checks: list[str]  # shell commands run in a separate sandbox container before a push
     public: bool  # the operator allows pushes to this repository while it is public
     check_network: str  # Docker network for the checks container; "none" by default
+    # "github" (default): visibility, pull requests, issues and comments go through
+    # the GitHub API. "none": a plain git remote (any address git can push to,
+    # including a local folder). Only github.push_branch works for it, and the
+    # operator states its visibility below instead of GitHub reporting it.
+    forge: str = "github"
+    visibility: str = ""  # "private" or "public"; required when forge = "none"
+
+    @property
+    def plain_git(self) -> bool:
+        return self.forge == "none"
 
     def github_slug(self, host: str) -> tuple[str, str] | None:
         """(owner, repo) when the remote points at host, else None."""
+        if self.plain_git:
+            return None
         return parse_github_remote(self.remote, host)
 
 
@@ -444,6 +464,9 @@ class McpServerConfig:
     tools: list[McpToolConfig]
     instructions: Path | None = None  # read-only folder shown to the model
     preset: str = ""  # "factiq" for the built-in preset
+    # Off by default. A command connector runs on the host as the host user, outside
+    # the sandbox; the operator must say so with allow_host_command = true.
+    allow_host_command: bool = False
 
     @property
     def read_tools(self) -> list[str]:
@@ -699,6 +722,11 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
 
     github = _build_github(data["github"])
     repositories = _build_repositories(data["repositories"])
+    if any(repo.plain_git for repo in repositories) and not github.author_email:
+        raise ConfigError(
+            "github.author_email must be set when a repository has forge = 'none'; "
+            "without GitHub there is no account to take a no-reply address from"
+        )
     browser = _build_browser(data["browser"])
     gateway = data["gateway"]
     _positive(gateway["call_timeout_seconds"], "gateway.call_timeout_seconds")
@@ -831,6 +859,9 @@ def _build_github(github: dict[str, Any]) -> GithubConfig:
         raise ConfigError("github.branch_prefix must be a branch name prefix such as opendot/")
     _positive(github["max_file_kib"], "github.max_file_kib")
     _positive(github["check_minutes"], "github.check_minutes")
+    _positive(github["max_diff_chars"], "github.max_diff_chars")
+    if not isinstance(github["allow_binary_public"], bool):
+        raise ConfigError("github.allow_binary_public must be true or false")
     return GithubConfig(
         token_env=github["token_env"],
         api_url=github["api_url"].rstrip("/"),
@@ -845,6 +876,8 @@ def _build_github(github: dict[str, Any]) -> GithubConfig:
         forbidden_files=_string_list(github["forbidden_files"], "github.forbidden_files"),
         max_file_kib=github["max_file_kib"],
         check_minutes=github["check_minutes"],
+        max_diff_chars=github["max_diff_chars"],
+        allow_binary_public=github["allow_binary_public"],
     )
 
 
@@ -857,7 +890,15 @@ def _build_repositories(items: list[Any]) -> list[RepositoryConfig]:
             item,
             where,
             {"name", "remote"},
-            {"default_branch", "prepare", "checks", "public", "check_network"},
+            {
+                "default_branch",
+                "prepare",
+                "checks",
+                "public",
+                "check_network",
+                "forge",
+                "visibility",
+            },
         )
         name = _check_name(item["name"], f"{where}.name")
         if name in seen:
@@ -877,6 +918,17 @@ def _build_repositories(items: list[Any]) -> list[RepositoryConfig]:
             raise ConfigError(f"{where}.check_network must name a Docker network, or 'none'")
         if network == "host" or network.startswith("container:"):
             raise ConfigError(f"{where}.check_network may not share another network namespace")
+        forge = item.get("forge", "github")
+        if forge not in ("github", "none"):
+            raise ConfigError(f"{where}.forge must be 'github' or 'none'")
+        visibility = item.get("visibility", "")
+        if forge == "none" and visibility not in ("private", "public"):
+            raise ConfigError(
+                f"{where}.visibility must be 'private' or 'public' when forge = 'none', "
+                "because no service reports it"
+            )
+        if forge == "github" and visibility != "":
+            raise ConfigError(f"{where}.visibility is only for forge = 'none'; GitHub reports it")
         repos.append(
             RepositoryConfig(
                 name=name,
@@ -886,6 +938,8 @@ def _build_repositories(items: list[Any]) -> list[RepositoryConfig]:
                 checks=_string_list(item.get("checks", []), f"{where}.checks"),
                 public=public,
                 check_network=network,
+                forge=forge,
+                visibility=visibility,
             )
         )
     return repos
@@ -946,7 +1000,12 @@ def _build_mcp_servers(items: list[Any]) -> list[McpServerConfig]:
     seen: set[str] = set()
     for index, item in enumerate(items):
         where = f"mcp_servers[{index}]"
-        _check_keys(item, where, {"name", "tools"}, {"url", "command", "auth", "auth_env"})
+        _check_keys(
+            item,
+            where,
+            {"name", "tools"},
+            {"url", "command", "auth", "auth_env", "allow_host_command"},
+        )
         name = _check_name(item["name"], f"{where}.name")
         if name in RESERVED_SERVER_NAMES:
             raise ConfigError(f"{where}.name {name!r} is reserved")
@@ -960,8 +1019,19 @@ def _build_mcp_servers(items: list[Any]) -> list[McpServerConfig]:
         command = _string_list(command, f"{where}.command")
         if bool(url) == bool(command):
             raise ConfigError(f"{where} needs exactly one of url and command")
-        if url and not url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
-            raise ConfigError(f"{where}.url must be https://, or http:// on this machine")
+        if url:
+            _check_connector_url(url, f"{where}.url")
+        allow_host_command = item.get("allow_host_command", False)
+        if not isinstance(allow_host_command, bool):
+            raise ConfigError(f"{where}.allow_host_command must be true or false")
+        if command and not allow_host_command:
+            raise ConfigError(
+                f"{where}.command runs {command[0]!r} on the host as your user, outside the "
+                "sandbox, with your files and network. Set allow_host_command = true in this "
+                "connector's table if you trust that program."
+            )
+        if allow_host_command and not command:
+            raise ConfigError(f"{where}.allow_host_command is used only with command")
         auth = item.get("auth", "none")
         if auth not in MCP_AUTH_KINDS:
             raise ConfigError(f"{where}.auth must be one of {list(MCP_AUTH_KINDS)}")
@@ -996,6 +1066,29 @@ def _build_mcp_servers(items: list[Any]) -> list[McpServerConfig]:
                 auth=auth,
                 auth_env=auth_env,
                 tools=tools,
+                allow_host_command=allow_host_command,
             )
         )
     return servers
+
+
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _check_connector_url(url: str, where: str) -> None:
+    """https:// anywhere, or http:// to this machine only (by host name, not by prefix)."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        parts.port  # noqa: B018 - raises ValueError on a bad port
+    except ValueError as exc:
+        raise ConfigError(f"{where} is not a valid address: {exc}") from None
+    if not host:
+        raise ConfigError(f"{where} has no host name")
+    if parts.scheme == "https":
+        return
+    if parts.scheme == "http" and host.lower() in LOCAL_HOSTS:
+        return
+    raise ConfigError(
+        f"{where} must be https://, or http:// to 127.0.0.1, localhost or [::1]; got {url!r}"
+    )

@@ -33,7 +33,7 @@ from opendot.backends import (
     StepLimits,
     StepTimedOut,
 )
-from opendot.models import Mount, Step, StepResult
+from opendot.models import Mount, Step, StepPlan, StepResult
 
 if TYPE_CHECKING:
     from opendot.config import Config
@@ -50,6 +50,7 @@ class FakeCall:
     mounts: list[Mount]
     resume_id: str | None
     limits: StepLimits | None
+    plan: StepPlan | None = None
 
 
 @dataclass
@@ -132,6 +133,7 @@ class FakeBackend:
         *,
         limits: StepLimits | None = None,
         should_stop: Callable[[], bool] | None = None,
+        plan: StepPlan | None = None,
     ) -> StepResult:
         step = Step(step)
         self.calls.append(
@@ -143,6 +145,7 @@ class FakeBackend:
                 mounts=list(mounts),
                 resume_id=resume_id,
                 limits=limits,
+                plan=plan,
             )
         )
         if should_stop is not None and should_stop():

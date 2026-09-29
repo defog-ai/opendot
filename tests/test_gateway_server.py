@@ -5,6 +5,7 @@ The upstream MCP server is a real SDK server run in-process over memory streams.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import socket
@@ -472,3 +473,40 @@ def test_start_fails_cleanly_when_the_store_cannot_open(config, task):
     with pytest.raises(GatewayError, match="database is locked"):
         gateway.start()
     assert not (folder / "fake.sock").exists()
+
+
+BEARER = "bearer-" + "5f0c9a1e7d3b2468ace0"
+URL_KEY = "urlkey-" + "8d1b3f5a7c9e0246bdf1"
+ACCESS = "access-" + "2c4e6a8b0d1f3579ace2"
+
+
+@pytest.mark.parametrize("auth", ["bearer_env", "oauth"])
+def test_connector_errors_never_show_its_credentials(run_gateway, store, task, auth):
+    url = f"https://mcp.example.com/mcp?key={URL_KEY}&v=1"
+    server = dataclasses.replace(
+        fake_connector(),
+        url=url,
+        auth=auth,
+        auth_env="FAKE_MCP_TOKEN" if auth == "bearer_env" else "",
+    )
+    store.save_connector_token("fake", ACCESS, refresh_token="refresh-" + "7b9d1f3e5a0c2468")
+    message = (
+        f"POST {url} failed; headers: Authorization: Bearer {BEARER}, "
+        f"echo {BEARER} {ACCESS} {URL_KEY}"
+    )
+    gateway = run_gateway(
+        connectors=[server], factory=failing_factory(message), env={"FAKE_MCP_TOKEN": BEARER}
+    )
+    client = LineClient(gateway.socket_paths["fake"])
+    client.request("initialize", {})
+    client.request("tools/list")
+    shown = result_text(client.call("search", {"query": "x"}))
+    client.close()
+    gateway.stop()
+    logged = " ".join(r.error or "" for r in calls_of(store, task))
+    assert "https://mcp.example.com/mcp failed" in shown
+    for text in (shown, logged):
+        assert URL_KEY not in text
+        assert ACCESS not in text
+        if auth == "bearer_env":
+            assert BEARER not in text

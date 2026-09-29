@@ -135,7 +135,11 @@ class GitHubClient:
     ) -> dict[str, Any] | None:
         params = {"state": "all", "creator": creator, "since": since}
         for issue in self._pages(f"/repos/{owner}/{repo}/issues", params):
-            if "pull_request" not in issue and text in (issue.get("body") or ""):
+            if (
+                "pull_request" not in issue
+                and _login(issue) == creator.lower()
+                and text in (issue.get("body") or "")
+            ):
                 return issue
         return None
 
@@ -148,11 +152,13 @@ class GitHubClient:
         return self._request("POST", f"/repos/{owner}/{repo}/issues", json=payload).json()
 
     def find_comment_with(
-        self, owner: str, repo: str, number: int, text: str, *, since: str
+        self, owner: str, repo: str, number: int, text: str, *, author: str, since: str
     ) -> dict[str, Any] | None:
+        """The first comment by author that holds text. Anyone can post a comment with
+        the same text, so a comment by another user never counts."""
         path = f"/repos/{owner}/{repo}/issues/{int(number)}/comments"
         for comment in self._pages(path, {"since": since}):
-            if text in (comment.get("body") or ""):
+            if _login(comment) == author.lower() and text in (comment.get("body") or ""):
                 return comment
         return None
 
@@ -160,3 +166,32 @@ class GitHubClient:
         return self._request(
             "POST", f"/repos/{owner}/{repo}/issues/{int(number)}/comments", json={"body": body}
         ).json()
+
+
+def _login(item: dict[str, Any]) -> str:
+    """The lower-case login of the user who made an issue, pull request or comment."""
+    user = item.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    return login.lower() if isinstance(login, str) else ""
+
+
+def own_pull(pull: dict[str, Any], branch: str, login: str) -> bool:
+    """True when login opened the pull request from branch of the repository itself.
+
+    A pull request from a fork, from another branch, or by another user is never taken
+    over: anyone can open one whose head has the same branch name or whose body holds
+    the same marker text."""
+    head = pull.get("head")
+    base = pull.get("base")
+    if not isinstance(head, dict) or not isinstance(base, dict):
+        return False
+    head_repo = head.get("repo")
+    base_repo = base.get("repo")
+    if not isinstance(head_repo, dict) or not isinstance(base_repo, dict):
+        return False
+    return (
+        head_repo.get("id") is not None
+        and head_repo.get("id") == base_repo.get("id")
+        and head.get("ref") == branch
+        and _login(pull) == login.lower()
+    )

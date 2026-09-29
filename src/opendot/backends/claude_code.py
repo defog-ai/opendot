@@ -38,15 +38,19 @@ from opendot.backends import (
     StepTimedOut,
     SubprocessRunner,
 )
-from opendot.models import Mount, Step, StepResult
+from opendot.models import McpServerSpec, Mount, Step, StepPlan, StepResult
 from opendot.proc import Deadline, LineReader
 from opendot.redact import redact, write_redacted
 from opendot.sandbox import (
     CONTAINER_CLI_HOME,
     SandboxError,
     adopt_session,
+    check_host_mounts,
     check_mounts,
+    check_plan_env,
     check_step_env,
+    claude_mcp_allowed_tools,
+    claude_mcp_config,
     container_name,
     docker_run_args,
     new_session,
@@ -85,8 +89,15 @@ def claude_args(
     session_id: str,
     resume: bool,
     model: str = "",
+    mcp_servers: Sequence[McpServerSpec] = (),
 ) -> list[str]:
-    """The `claude` command line run inside the container. The prompt is not in it."""
+    """The `claude` command line run inside the container. The prompt is not in it.
+
+    The "$schema" key is left out of the schema: the CLI refuses a --json-schema
+    that names its dialect. mcp_servers (work steps only) are given with
+    --mcp-config, and only their listed tools are added to --allowedTools.
+    """
+    schema = {key: value for key, value in output_schema.items() if key != "$schema"}
     args = [
         "claude",
         "-p",
@@ -94,7 +105,7 @@ def claude_args(
         "stream-json",
         "--verbose",
         "--json-schema",
-        json.dumps(output_schema, separators=(",", ":")),
+        json.dumps(schema, separators=(",", ":")),
         "--permission-mode",
         "dontAsk",
         "--strict-mcp-config",
@@ -106,8 +117,15 @@ def claude_args(
     else:
         args += ["--session-id", session_id]
     if Step(step) is Step.WORK:
-        args += ["--allowedTools", ",".join(WORK_TOOLS)]
+        allowed = list(WORK_TOOLS)
+        if mcp_servers:
+            config = claude_mcp_config(mcp_servers)
+            args += ["--mcp-config", json.dumps(config, separators=(",", ":"))]
+            allowed += claude_mcp_allowed_tools(mcp_servers)
+        args += ["--allowedTools", ",".join(allowed)]
     else:
+        if mcp_servers:
+            raise SandboxError(f"a {Step(step).value} step gets no MCP servers")
         args += ["--tools", ""]
     return args
 
@@ -166,12 +184,19 @@ class ClaudeCodeBackend:
         *,
         limits: StepLimits | None = None,
         should_stop: Callable[[], bool] | None = None,
+        plan: StepPlan | None = None,
     ) -> StepResult:
         step = Step(step)
         token_variable, token = self._login()
         try:
             env = check_step_env(step, env, self.config)
             mounts = check_mounts(step, mounts, self.config)
+            host_mounts = check_host_mounts(step, plan.host_mounts, self.config) if plan else []
+            plan_env = check_plan_env(plan.fixed_env) if plan else {}
+            mcp_servers = list(plan.mcp_servers) if plan else []
+            if mcp_servers and step is not Step.WORK:
+                raise SandboxError(f"a {step.value} step gets no MCP servers")
+            claude_mcp_config(mcp_servers)  # raises SandboxError for a bad name
             if resume_id:
                 session = open_session(self.config, KIND, resume_id)
                 session_id = resume_id
@@ -201,12 +226,15 @@ class ClaudeCodeBackend:
                 session_id=session_id,
                 resume=bool(resume_id),
                 model=self.model,
+                mcp_servers=mcp_servers,
             ),
             session=session,
             work_writable=step is not Step.REVIEW,
             mounts=mounts,
             env_names=sorted([*env, token_variable]),
-            fixed_env={"CLAUDE_CONFIG_DIR": CONTAINER_CLI_HOME},
+            fixed_env={**plan_env, "CLAUDE_CONFIG_DIR": CONTAINER_CLI_HOME},
+            host_mounts=host_mounts,
+            shm_size=plan.shm_size if plan else "",
         )
         process_env = {**env, token_variable: token}
 

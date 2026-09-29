@@ -1,6 +1,6 @@
 [project]
 name = "opendot"
-version = "0.1.0"
+version = "0.2.0"
 description = "A self-hosted assistant that takes ongoing work, runs each step in a locked-down container, and asks before it acts."
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -9,7 +9,7 @@ dependencies = [
     "croniter>=2.0",
     "httpx>=0.27",
     "jsonschema>=4.21",
-    "mcp>=2.2,<3",
+    "mcp>=2.2,<2.3",  # the OAuth provider overrides private SDK methods
     "tzdata>=2024.1",
 ]
 classifiers = [

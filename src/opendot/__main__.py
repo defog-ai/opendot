@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from opendot import __version__, cron, help
-from opendot.actions import KIND_NOTIFY, KIND_REPLY, default_registry
+from opendot.actions import KIND_NOTIFY, KIND_REPLY, build_registry
 from opendot.approvals import NotAllowedToDecide
 from opendot.backends import BackendError, CommandRunner, SubprocessRunner
 from opendot.channels import ChannelError, enabled_channels
@@ -32,6 +32,8 @@ from opendot.container_contract import (
     dockerfile_path,
     verify_image_args,
 )
+from opendot.extensions import doctor_checks as feature_doctor_checks
+from opendot.extensions import register_feature_cli
 from opendot.models import (
     ActionStatus,
     ApprovalStatus,
@@ -53,6 +55,7 @@ from opendot.rules import (
     approve_operator_rule,
     remove_operator_rule,
 )
+from opendot.sandbox import SNAP_DOCKER_ADVICE, detect_snap_docker, snap_docker_problems
 from opendot.schedules import (
     ScheduleError,
     create_schedule,
@@ -125,7 +128,9 @@ def _orchestrator(config: Config, store: Store, *, run_steps: bool) -> Orchestra
         worker=_NoSteps(),
         reviewer=_NoSteps(),
         channels={c.name: c for c in enabled_channels(config)},
-        registry=default_registry(),
+        # The full registry: an approval given here runs the approved action in
+        # this process, and that may be a GitHub or connector action.
+        registry=build_registry(config),
     )
 
 
@@ -294,7 +299,7 @@ def doctor_findings(
             )
         )
     if "anthropic_api" in kinds:
-        found.append(("error", "the anthropic_api backend is not ready in v0.1"))
+        found.append(("error", "the anthropic_api backend is not ready yet"))
     if "codex" in kinds:
         auth = config.codex.auth_file
         if auth.is_file():
@@ -339,6 +344,11 @@ def doctor_findings(
                 )
             )
 
+    if kinds & {"codex", "claude_code"}:
+        found += _snap_findings(config, runner)
+    for name, ok, detail in feature_doctor_checks(config):
+        found.append(("ok" if ok else "error", f"{name}: {detail}"))
+
     slack = config.slack
     if slack.enabled:
         if slack.bot_token(env):
@@ -356,12 +366,41 @@ def doctor_findings(
     return found
 
 
+def _snap_findings(config: Config, runner: CommandRunner) -> list[tuple[str, str]]:
+    """Findings for Docker installed as a snap package. Empty for other Docker installs."""
+    root_dir: str | None = None
+    try:
+        result = runner.run(
+            [config.sandbox.docker, "info", "--format", "{{.DockerRootDir}}"], timeout=30
+        )
+        if result.returncode == 0:
+            root_dir = result.stdout.strip() or None
+    except OSError:
+        return []
+    if not detect_snap_docker(config.sandbox.docker, root_dir):
+        return []
+    problems = snap_docker_problems(config, True)
+    if not problems:
+        return [
+            (
+                "ok",
+                "Docker is the snap package; sandbox.no_new_privileges is false and no "
+                "mounted folder is under /tmp (see SECURITY.md for the trade-off)",
+            )
+        ]
+    return [("error", f"snap Docker: {problem}") for problem in problems]
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     config = _load(args)
     findings = doctor_findings(config, _runner())
     for level, message in findings:
         print(f"[{level}] {message}")
     errors = sum(1 for level, _ in findings if level == "error")
+    if any(message.startswith("snap Docker:") for _, message in findings):
+        print()
+        print(SNAP_DOCKER_ADVICE)
+        print()
     print(f"{errors} error(s).")
     return 1 if errors else 0
 
@@ -384,7 +423,7 @@ def cmd_verify_image(args: argparse.Namespace) -> int:
     config = _load(args)
     command = verify_image_args(config.sandbox.docker, config.sandbox.image)
     result = _runner().run(command, timeout=300)
-    check = check_verify_output(result.returncode, result.stdout)
+    check = check_verify_output(result.returncode, result.stdout, require_browser=True)
     if check.ok:
         print(f"{config.sandbox.image} has every required tool and runs as a non-root user.")
         return 0
@@ -925,6 +964,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the crontab line and change nothing",
     )
     p.add_argument("--remove", action="store_true", help="remove the OpenDot entry")
+
+    # github, browser and connectors, plus `init --with-factiq`.
+    register_feature_cli(commands)
     return parser
 
 

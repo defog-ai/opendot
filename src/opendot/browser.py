@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import re
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,6 +42,7 @@ from opendot.sandbox import (
     SandboxError,
     docker_run_args,
     hand_to_container,
+    stop_container,
 )
 
 if TYPE_CHECKING:
@@ -158,6 +160,9 @@ def step_extensions(config: Config) -> list[BrowserExtension]:
 # ---------------------------------------------------------------------------
 
 
+CHECK_TIMEOUT_SECONDS = 300
+
+
 def browser_check_args(config: Config, url: str) -> list[str]:
     """`docker run` arguments for a live browser session in the step image.
 
@@ -189,10 +194,20 @@ def run_browser_check(config: Config, url: str, runner: CommandRunner) -> tuple[
         args = browser_check_args(config, url)
     except (SandboxError, ValueError) as exc:
         return False, str(exc)
+    from opendot.github.containers import image_id
+
     try:
-        result = runner.run(args, input="", timeout=300)
+        if image_id(config, runner) is None:
+            return False, (
+                f"the image {config.sandbox.image} is not on this machine or Docker did "
+                "not answer; run `opendot build-image` first"
+            )
+        result = runner.run(args, input="", timeout=CHECK_TIMEOUT_SECONDS)
     except OSError:
         return False, f"cannot run {config.sandbox.docker}; is Docker installed?"
+    except subprocess.TimeoutExpired:
+        stop_container(runner, config.sandbox.docker, args[args.index("--name") + 1])
+        return False, f"the browser did not finish within {CHECK_TIMEOUT_SECONDS} seconds"
     for line in result.stdout.splitlines():
         if line.startswith("browser ok"):
             return True, f"opened {url}: page title {line.removeprefix('browser ok').strip()!r}"
@@ -213,7 +228,8 @@ def _cmd_browser_check(args: argparse.Namespace) -> int:
 
     config = Config.load(Path(args.config) if args.config else None)
     print(
-        f"Starting a headless browser in {config.sandbox.image} (network {config.sandbox.network})"
+        f"Starting a headless browser in {config.sandbox.image} (network {config.sandbox.network})",
+        flush=True,
     )
     ok, message = run_browser_check(config, args.url, _runner())
     if ok:

@@ -531,6 +531,17 @@ def _check_spec(spec: McpServerSpec) -> None:
             raise SandboxError(f"bad MCP tool name {tool!r}")
 
 
+def check_plan_env(values: Mapping[str, str]) -> dict[str, str]:
+    """Fixed, non-secret values a step extension adds to the container. They may
+    not replace a reserved name (HOME, PATH, the CLI login and home variables)."""
+    for key, value in values.items():
+        if not _ENV_NAME.match(key) or key in RESERVED_ENV_NAMES:
+            raise SandboxError(f"a step extension may not set {key}")
+        if not isinstance(value, str) or "\0" in value or "\n" in value:
+            raise SandboxError(f"the value for {key} is not a single line of text")
+    return dict(values)
+
+
 def _toml_value(value: object) -> str:
     """A TOML value for a Codex -c override. JSON strings and arrays of strings
     are valid TOML; inline tables are written by hand."""
@@ -617,9 +628,11 @@ you lose is the kernel flag that stops a process from gaining rights through a
 setuid or setgid program inside the image. Docker from docker.com does not have
 this limit.
 
-Snap Docker also cannot see folders under /tmp. OpenDot mounts only folders
-under your home folder (the state root and your sandbox.readonly_mounts), so
-keep state_root and every readonly_mounts entry out of /tmp."""
+Snap Docker also cannot see folders under /tmp. Every folder OpenDot mounts
+comes from core.state_root (session folders, task copies of repositories, run
+artifacts, connector files) or from your sandbox.readonly_mounts, so keep
+state_root and every readonly_mounts entry out of /tmp. A folder under your
+home folder works."""
 
 
 def detect_snap_docker(

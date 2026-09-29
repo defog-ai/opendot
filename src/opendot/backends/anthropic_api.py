@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from opendot.backends import CommandRunner, StepLimits
-from opendot.models import Mount, Step, StepResult
+from opendot.models import Mount, Step, StepPlan, StepResult
 
 if TYPE_CHECKING:
     from opendot.config import Config
@@ -41,5 +41,6 @@ class AnthropicApiBackend:
         *,
         limits: StepLimits | None = None,
         should_stop: Callable[[], bool] | None = None,
+        plan: StepPlan | None = None,
     ) -> StepResult:
         raise NotImplementedError(NOT_READY)

@@ -18,6 +18,7 @@ import pytest
 
 from conftest import FakeDocker
 from opendot.actions import ActionContext, ActionRegistry, InvalidProposal, build_registry
+from opendot.backends import CommandResult
 from opendot.config import Config
 from opendot.extensions import ExtensionError, StepContext
 from opendot.github import cli as github_cli
@@ -30,8 +31,10 @@ from opendot.github.actions import (
     action_handlers,
     marker_comment,
 )
+from opendot.github.containers import safe_directory_env
 from opendot.github.step import RepositoryCopies, step_extensions
 from opendot.models import PublicationKind, PublicationState, Step, StepPlan, TaskState
+from opendot.sandbox import check_plan_env
 from opendot.store import open_store
 
 TOKEN = "tok-" + "0123456789abcdef"
@@ -54,6 +57,33 @@ def plain_git(cwd: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+class ImageDocker(FakeDocker):
+    """FakeDocker that answers `docker image inspect` with image_id and records the
+    question in inspects, not in runs, so scripted results stay for the containers."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_id: str | None = "sha256:" + "a" * 64
+        self.inspects = 0
+
+    def run(self, args, *, input=None, env=None, timeout=None):
+        if list(args[1:3]) == ["image", "inspect"]:
+            self.inspects += 1
+            if self.image_id is None:
+                return CommandResult(list(args), 1, "", "No such image")
+            return CommandResult(list(args), 0, self.image_id + "\n", "")
+        return super().run(args, input=input, env=env, timeout=timeout)
+
+
+def pull_fields(branch: str, *, owner: str = "acme", repo_id: int = 1) -> dict[str, Any]:
+    """The head and base of a pull request on acme/widget (repository id 1)."""
+    return {
+        "label": f"{owner}:{branch}",
+        "head": {"ref": branch, "repo": {"id": repo_id, "full_name": f"{owner}/widget"}},
+        "base": {"ref": "main", "repo": {"id": 1, "full_name": "acme/widget"}},
+    }
 
 
 class FakeGitHub:
@@ -91,8 +121,8 @@ class FakeGitHub:
             if request.method == "POST":
                 return httpx.Response(201, json=self._create(path, json.loads(request.content)))
             if params.get("head"):
-                branch = params["head"].split(":", 1)[1]
-                return httpx.Response(200, json=[p for p in self.pulls if p["head"] == branch])
+                label = params["head"]
+                return httpx.Response(200, json=[p for p in self.pulls if p["label"] == label])
             return httpx.Response(200, json=self.pulls)
         if path == "/repos/acme/widget/issues":
             if request.method == "POST":
@@ -118,8 +148,9 @@ class FakeGitHub:
             "body": body.get("body"),
             "html_url": f"https://github.com/acme/widget/x/{number}",
         }
+        item["user"] = {"login": "opendot-bot"}
         if path.endswith("/pulls"):
-            item["head"] = body["head"]
+            item.update(pull_fields(body["head"]))
             self.pulls.append(item)
         elif path.endswith("/comments"):
             self.comments.append(item)
@@ -131,7 +162,15 @@ class FakeGitHub:
 class Env:
     """One configured repository, a task with its copy, and the handlers."""
 
-    def __init__(self, tmp_path: Path, *, checks: list[str], public: bool = True, **github):
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        checks: list[str],
+        public: bool = True,
+        plain_visibility: str = "",
+        **github,
+    ):
         self.tmp_path = tmp_path
         source = tmp_path / "source"
         source.mkdir()
@@ -141,20 +180,29 @@ class Env:
         plain_git(source, "commit", "--quiet", "-m", "first")
         self.remote = tmp_path / "remote.git"
         plain_git(tmp_path, "clone", "--quiet", "--bare", str(source), str(self.remote))
+        repository: dict[str, Any] = {
+            "name": "widget",
+            "remote": REMOTE,
+            "checks": checks,
+            "public": public,
+        }
+        if plain_visibility:
+            # A plain git remote: the bare repository on disk, no GitHub at all.
+            repository.update(
+                {"remote": str(self.remote), "forge": "none", "visibility": plain_visibility}
+            )
         self.config = Config.from_dict(
             {
                 "core": {"state_root": str(tmp_path / "state")},
                 "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
                 "github": {"author_email": "bot@example.com", **github},
-                "repositories": [
-                    {"name": "widget", "remote": REMOTE, "checks": checks, "public": public}
-                ],
+                "repositories": [repository],
             },
             env={},
         )
         self.config.ensure_directories()
         self.store = open_store(self.config)
-        self.docker = FakeDocker()
+        self.docker = ImageDocker()
         self.github = FakeGitHub()
         self.overrides = {"widget": str(self.remote)}
         self.task = self.store.create_task(
@@ -206,6 +254,33 @@ def test_step_makes_copy_mount_and_note(env: Env) -> None:
     assert copy2 == copy and (copy / "app.py").read_text() == "changed\n"
 
 
+def test_containers_trust_the_repository_folder(tmp_path: Path) -> None:
+    # A root host hands the work files to the container user but not the read-only
+    # .git folder; without safe.directory git in the container refuses the copy.
+    env = Env(tmp_path, checks=[])
+    env.config.repositories[0].prepare.append("npm ci")
+    plan, _ = env.make_copy()
+    assert plan.fixed_env == {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": "/opendot/repos/widget",
+    }
+    assert check_plan_env(plan.fixed_env) == plan.fixed_env
+    [prepare] = [r.args for r in env.docker.runs if "npm ci" in r.args]
+    assert "GIT_CONFIG_VALUE_0=/opendot/repos/widget" in prepare
+    assert "GIT_CONFIG_KEY_0=safe.directory" in prepare
+
+
+def test_safe_directory_env_keeps_values_already_set() -> None:
+    existing = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": "c"}
+    env = safe_directory_env(["/opendot/repos/x", "/opendot/repos/y"], existing)
+    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert (env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("a.b", "c")
+    assert env["GIT_CONFIG_VALUE_1"] == "/opendot/repos/x"
+    assert env["GIT_CONFIG_VALUE_2"] == "/opendot/repos/y"
+    assert safe_directory_env([]) == {}
+
+
 def test_step_prepare_failure_removes_copy(tmp_path: Path) -> None:
     env = Env(tmp_path, checks=[])
     env.config.repositories[0].prepare.append("npm ci")
@@ -247,7 +322,7 @@ def test_push_branch_prepare_and_execute(env: Env, monkeypatch) -> None:
     )
     payload = action.payload
     assert action.target == f"github:acme/widget:opendot/task-{env.task.id}"
-    assert payload["files"] == [{"path": "app.py", "status": "M"}]
+    assert payload["files"] == [{"path": "app.py", "status": "M", "bytes": 15, "binary": False}]
     assert payload["checks"][0]["command"] == "make test"
     assert payload["visibility"] == "public"
     assert "+print('fixed')" in payload["diff"]
@@ -361,6 +436,125 @@ def test_checks_are_cached_per_tree(env: Env) -> None:
     assert len(env.docker.runs) == 1
 
 
+def test_check_cache_is_tied_to_the_image_content(env: Env) -> None:
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("x\n")
+    handler = env.handler(PushBranchHandler)
+    handler.prepare({"repository": "widget", "commit_message": "x"}, env.ctx)
+    env.docker.image_id = "sha256:" + "b" * 64  # the image was rebuilt under the same name
+    handler.prepare({"repository": "widget", "commit_message": "x"}, env.ctx)
+    assert len(env.docker.runs) == 2
+
+
+def test_checks_are_not_cached_when_the_image_id_is_unknown(env: Env) -> None:
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("x\n")
+    env.docker.image_id = None
+    handler = env.handler(PushBranchHandler)
+    handler.prepare({"repository": "widget", "commit_message": "x"}, env.ctx)
+    handler.prepare({"repository": "widget", "commit_message": "x"}, env.ctx)
+    assert len(env.docker.runs) == 2
+    assert not list((copy / ".git").glob("opendot-checks-*"))
+
+
+PRIVATE_PATH = "/" + "home/alice/secret-project"
+
+
+@pytest.mark.parametrize("attributes", ["* -diff\n", "*.txt binary\n"])
+def test_public_push_screens_text_that_gitattributes_marks_binary(
+    tmp_path: Path, attributes: str
+) -> None:
+    env = Env(tmp_path, checks=[])
+    _, copy = env.make_copy()
+    (copy / ".gitattributes").write_text(attributes)
+    (copy / "notes.txt").write_text(f"see {PRIVATE_PATH}\n")
+    with pytest.raises(InvalidProposal, match="home-folder path"):
+        env.handler(PushBranchHandler).prepare(
+            {"repository": "widget", "commit_message": "x"}, env.ctx
+        )
+
+
+def test_public_push_screens_file_with_nul_byte(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[], allow_binary_public=True)
+    _, copy = env.make_copy()
+    (copy / "notes.txt").write_bytes(b"\0\0" + f"see {PRIVATE_PATH}\n".encode())
+    with pytest.raises(InvalidProposal, match="home-folder path"):
+        env.handler(PushBranchHandler).prepare(
+            {"repository": "widget", "commit_message": "x"}, env.ctx
+        )
+
+
+def test_public_push_refuses_binary_files_by_default(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[])
+    _, copy = env.make_copy()
+    (copy / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR")
+    with pytest.raises(InvalidProposal, match="binary files.*logo.png.*allow_binary_public"):
+        env.handler(PushBranchHandler).prepare(
+            {"repository": "widget", "commit_message": "x"}, env.ctx
+        )
+
+
+def test_binary_files_are_listed_with_sizes_and_left_out_of_the_diff(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[])
+    env.github.private = True
+    _, copy = env.make_copy()
+    (copy / "logo.png").write_bytes(b"\x89PNG\0\0\0" + b"z" * 100)
+    (copy / "app.py").write_text("print('fixed')\n")
+    action = env.handler(PushBranchHandler).prepare(
+        {"repository": "widget", "commit_message": "x"}, env.ctx
+    )
+    payload = action.payload
+    assert {"path": "logo.png", "status": "A", "bytes": 107, "binary": True} in payload["files"]
+    assert "logo.png" not in payload["diff"]
+    assert "print('fixed')" in payload["diff"]
+    assert any("logo.png (added, 107 bytes)" in note for note in payload["host_notes"])
+
+
+def test_gitattributes_cannot_hide_a_diff_from_the_approver(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[])
+    _, copy = env.make_copy()
+    (copy / ".gitattributes").write_text("*.py -diff\n")
+    (copy / "app.py").write_text("print('changed')\n")
+    action = env.handler(PushBranchHandler).prepare(
+        {"repository": "widget", "commit_message": "x"}, env.ctx
+    )
+    payload = action.payload
+    assert "+print('changed')" in payload["diff"]
+    assert "Binary files" not in payload["diff"]
+    assert "app.py | +1 -1" in payload["diff_stat"]
+    assert payload["gitattributes"] == {".gitattributes": "*.py -diff\n"}
+    assert any(".gitattributes" in note for note in payload["host_notes"])
+
+
+def test_a_diff_longer_than_the_limit_is_refused_not_cut(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[], max_diff_chars=300)
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("print('x')\n" * 100)
+    with pytest.raises(InvalidProposal, match="more than github.max_diff_chars"):
+        env.handler(PushBranchHandler).prepare(
+            {"repository": "widget", "commit_message": "x"}, env.ctx
+        )
+
+
+def test_diff_commands_never_run_a_configured_diff_program(env: Env) -> None:
+    _, copy = env.make_copy()
+    marker = env.tmp_path / "ran"
+    plain_git(copy, "config", "diff.external", f"touch {marker}")
+    plain_git(copy, "config", "diff.show.textconv", f"touch {marker}; cat")
+    (copy / ".gitattributes").write_text("* diff=show\n")
+    (copy / "app.py").write_text("print('changed')\n")
+    commit, _ = g.commit_worktree(
+        copy,
+        f"opendot/task-{env.task.id}",
+        "x",
+        g.Identity("a", "a@example.com", "a", "a@example.com"),
+    )
+    base = env.store.get_worktree(env.task.id, "widget").base_sha
+    assert "app.py" in g.diff_stat(copy, base, commit)
+    assert "+print('changed')" in g.diff_text(copy, base, commit)
+    assert not marker.exists()
+
+
 def test_public_repository_refuses_private_text(env: Env) -> None:
     _, copy = env.make_copy()
     (copy / "notes.txt").write_text("see /" + "home/alice/secret-project\n")
@@ -456,12 +650,65 @@ def test_open_pr_finds_pull_by_marker(env: Env) -> None:
     (copy / "app.py").write_text("v1\n")
     handler = env.handler(OpenPullRequestHandler)
     action = handler.prepare({"repository": "widget", "title": "Fix"}, env.ctx)
+    # The head search misses it (the owner was renamed), the marker search finds it.
     env.github.pulls.append(
-        {"id": 5, "node_id": "N5", "number": 5, "head": "renamed", "body": action.payload["body"]}
+        {
+            "id": 5,
+            "node_id": "N5",
+            "number": 5,
+            "body": action.payload["body"],
+            "user": {"login": "opendot-bot"},
+            **pull_fields(action.payload["branch"], owner="old-name"),
+        }
     )
     result = handler.execute(action, env.ctx)
     assert result.ok and result.detail["number"] == 5
     assert env.github.posts() == []
+
+
+def test_open_pr_refuses_pull_on_the_branch_by_another_user(env: Env) -> None:
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("v1\n")
+    handler = env.handler(OpenPullRequestHandler)
+    action = handler.prepare({"repository": "widget", "title": "Fix"}, env.ctx)
+    env.github.pulls.append(
+        {
+            "id": 5,
+            "number": 5,
+            "body": "mine now",
+            "user": {"login": "mallory"},
+            **pull_fields(action.payload["branch"]),
+        }
+    )
+    result = handler.execute(action, env.ctx)
+    assert not result.ok and "does not take it over" in result.detail["error"]
+    assert env.github.posts() == []
+
+
+@pytest.mark.parametrize(
+    ("login", "repo_id", "branch"),
+    [("mallory", 1, None), ("opendot-bot", 2, None), ("opendot-bot", 1, "other")],
+)
+def test_open_pr_ignores_marked_pull_it_did_not_open(
+    env: Env, login: str, repo_id: int, branch: str | None
+) -> None:
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("v1\n")
+    handler = env.handler(OpenPullRequestHandler)
+    action = handler.prepare({"repository": "widget", "title": "Fix"}, env.ctx)
+    env.github.pulls.append(
+        {
+            "id": 5,
+            "number": 5,
+            "body": action.payload["body"],  # a copy of the marker
+            "user": {"login": login},
+            **pull_fields(branch or action.payload["branch"], owner="fork", repo_id=repo_id),
+        }
+    )
+    result = handler.execute(action, env.ctx)
+    assert result.ok and result.detail["number"] != 5
+    assert not result.detail["existing_pull_request"]
+    assert env.github.posts() == ["/repos/acme/widget/pulls"]
 
 
 # -- issues and comments ----------------------------------------------------
@@ -485,6 +732,28 @@ def test_issue_retry_after_lost_answer_does_not_duplicate(env: Env) -> None:
         r for r in env.github.requests if r.url.path.endswith("/issues") and r.method == "GET"
     ]
     assert search[0].url.params["creator"] == "opendot-bot"
+
+
+def test_issue_made_by_another_user_with_the_marker_is_not_reused(env: Env) -> None:
+    handler = env.handler(IssueHandler)
+    action = handler.prepare({"repository": "widget", "title": "Crash"}, env.ctx)
+    env.github.issues.append(
+        {"id": 5, "number": 5, "body": action.payload["body"], "user": {"login": "mallory"}}
+    )
+    result = handler.execute(action, env.ctx)
+    assert result.ok and not result.detail["existing"] and result.detail["number"] != 5
+    assert env.github.posts() == ["/repos/acme/widget/issues"]
+
+
+def test_comment_made_by_another_user_with_the_marker_is_not_reused(env: Env) -> None:
+    handler = env.handler(IssueCommentHandler)
+    action = handler.prepare({"repository": "widget", "number": 12, "body": "Fixed."}, env.ctx)
+    env.github.comments.append(
+        {"id": 5, "body": action.payload["body"], "user": {"login": "mallory"}}
+    )
+    result = handler.execute(action, env.ctx)
+    assert result.ok and not result.detail["existing"]
+    assert env.github.posts() == ["/repos/acme/widget/issues/12/comments"]
 
 
 def test_issue_comment(env: Env) -> None:
@@ -534,3 +803,98 @@ def test_doctor_checks(env: Env, monkeypatch) -> None:
         "github: token": False,
         "github: widget remote": True,
     }
+
+
+# -- plain git remotes (forge = "none") --------------------------------------
+
+
+def no_github(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"a plain git repository must not call GitHub: {request.url}")
+
+
+def plain_handler(env: Env, cls):
+    return cls(
+        env.config,
+        runner=env.docker,
+        env={},  # no GitHub token at all
+        transport=httpx.MockTransport(no_github),
+    )
+
+
+def test_plain_git_push_branch_needs_no_github(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[], plain_visibility="private")
+    plan, copy = env.make_copy()
+    assert "plain git remotes, not on GitHub: widget" in plan.prompt_notes[-1]
+    (copy / "app.py").write_text("print('fixed')\n")
+    handler = plain_handler(env, PushBranchHandler)
+    action = handler.prepare({"repository": "widget", "commit_message": "Fix it"}, env.ctx)
+    payload = action.payload
+    assert action.target == f"git:widget:opendot/task-{env.task.id}"
+    assert (payload["slug"], payload["visibility"]) == ("git/widget", "private")
+    assert plain_git(copy, "log", "-1", "--format=%ae") == "bot@example.com"
+    result = handler.execute(action, env.ctx)
+    assert result.ok, result.detail
+    assert env.remote_sha(payload["branch"]) == payload["commit"]
+    assert result.detail["url"] is None
+    [pub] = env.store.list_publications(task_id=env.task.id)
+    assert (pub.kind, pub.state) == (PublicationKind.BRANCH, PublicationState.PUBLISHED)
+
+
+@pytest.mark.parametrize("cls", [OpenPullRequestHandler, IssueHandler, IssueCommentHandler])
+def test_plain_git_refuses_github_only_actions(tmp_path: Path, cls) -> None:
+    env = Env(tmp_path, checks=[], plain_visibility="private")
+    env.make_copy()
+    proposal = {"repository": "widget", "title": "t", "body": "b", "number": 1}
+    with pytest.raises(InvalidProposal, match="forge = 'none'"):
+        plain_handler(env, cls).prepare(proposal, env.ctx)
+
+
+def test_plain_git_public_follows_the_public_setting(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[], public=False, plain_visibility="public")
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("x\n")
+    with pytest.raises(InvalidProposal, match="public by its configuration"):
+        plain_handler(env, PushBranchHandler).prepare(
+            {"repository": "widget", "commit_message": "x"}, env.ctx
+        )
+
+
+def test_plain_git_execute_refuses_when_stated_visibility_changed(tmp_path: Path) -> None:
+    env = Env(tmp_path, checks=[], plain_visibility="private")
+    _, copy = env.make_copy()
+    (copy / "app.py").write_text("x\n")
+    handler = plain_handler(env, PushBranchHandler)
+    action = handler.prepare({"repository": "widget", "commit_message": "x"}, env.ctx)
+    action.payload["visibility"] = "public"
+    result = handler.execute(action, env.ctx)
+    assert not result.ok and "now private" in result.detail["error"]
+
+
+def test_plain_git_doctor_needs_no_token(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENDOT_GITHUB_TOKEN", raising=False)
+    env = Env(tmp_path, checks=[], plain_visibility="private")
+    checks = {name: ok for name, ok, _ in github_cli.doctor_checks(env.config)}
+    assert checks == {"github: git": True, "github: widget remote": True}
+
+
+@pytest.mark.parametrize(
+    ("repo", "github", "message"),
+    [
+        ({"forge": "gitlab"}, {"author_email": "a@example.com"}, "forge must be"),
+        ({"forge": "none"}, {"author_email": "a@example.com"}, "visibility must be"),
+        ({"visibility": "private"}, {}, "only for forge"),
+        ({"forge": "none", "visibility": "private"}, {}, "author_email must be set"),
+    ],
+)
+def test_plain_git_config_is_checked(tmp_path: Path, repo, github, message) -> None:
+    from opendot.config import ConfigError
+
+    with pytest.raises(ConfigError, match=message):
+        Config.from_dict(
+            {
+                "core": {"state_root": str(tmp_path / "state")},
+                "github": github,
+                "repositories": [{"name": "widget", "remote": str(tmp_path / "r.git"), **repo}],
+            },
+            env={},
+        )

@@ -33,6 +33,9 @@ COMMANDS: dict[str, str] = {
     "schedules": "list, add, pause, resume or end schedules",
     "rules": "list, add, approve or remove permission rules",
     "install-cron": "add (or remove) a crontab entry that runs `opendot tick`",
+    "github": "repositories, task copies and what the host published on GitHub",
+    "browser": "check the built-in browser",
+    "connectors": "MCP connectors reached through the host gateway",
 }
 
 GETTING_STARTED = """\
@@ -49,6 +52,11 @@ With real backends:
   opendot doctor
   opendot task "..."
   opendot tick                 # or: opendot install-cron
+
+Optional features (each is off until the config turns it on):
+  [[repositories]] + OPENDOT_GITHUB_TOKEN   pull requests; see `opendot github`
+  [browser] enabled = true                  headless Chromium; `opendot browser check`
+  opendot init --with-factiq                the FactIQ connector; see `opendot connectors`
 
 The config file is found in this order: --config, OPENDOT_CONFIG,
 ~/.config/opendot/opendot.toml, then built-in defaults."""

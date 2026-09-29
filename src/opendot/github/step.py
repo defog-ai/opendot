@@ -5,7 +5,8 @@ Before a work step the host, for each configured repository:
 2. on the task's first step, clones it into worktrees/task-<id>/<name>, creates
    the branch <branch_prefix>task-<id> and runs the repository's prepare
    commands in a sandbox container;
-3. mounts the copy at /opendot/repos/<name>, with its .git folder read-only.
+3. mounts the copy at /opendot/repos/<name>, with its .git folder read-only, and
+   marks that folder as a git safe.directory for the container.
 
 Later steps of the same task reuse the copy, so the model's edits carry over.
 """
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from opendot.extensions import ExtensionError, StepContext
-from opendot.github.containers import run_repository_commands
+from opendot.github.containers import run_repository_commands, safe_directory_env
 from opendot.github.git import GitError, auth_env, git, head_sha
 from opendot.models import Attempt, HostMount, HostMountKind, StepPlan, WorktreeStatus
 from opendot.sandbox import CONTAINER_REPOS, container_user
@@ -172,6 +173,7 @@ class RepositoryCopies:
             )
             names.append(f"{CONTAINER_REPOS}/{repo.name}")
         if names:
+            plan.fixed_env = safe_directory_env(names, plan.fixed_env)
             plan.prompt_notes.append(
                 "Repositories: your copy of each repository is at "
                 + ", ".join(names)
@@ -180,6 +182,14 @@ class RepositoryCopies:
                 "commits your edits, runs the repository's checks and pushes only when you "
                 "propose a github.push_branch or github.open_pr action and it is approved."
             )
+            plain = [repo.name for repo in self.config.repositories if repo.plain_git]
+            if plain:
+                plan.prompt_notes.append(
+                    "These repositories are plain git remotes, not on GitHub: "
+                    + ", ".join(plain)
+                    + ". For them only github.push_branch works; pull requests, issues and "
+                    "comments are refused."
+                )
 
     def after_step(self, ctx: StepContext, plan: StepPlan, attempt: Attempt | None) -> None:
         return None

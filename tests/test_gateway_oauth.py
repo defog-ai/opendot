@@ -211,3 +211,41 @@ def test_login_refuses_a_connector_without_oauth(store):
     )
     with pytest.raises(LoginError, match="does not use oauth"):
         login(server, store, open_browser=False)
+
+
+def test_login_that_stores_no_new_token_fails_even_with_an_old_one(store, monkeypatch):
+    # An earlier sign-in is in the database. A server that answers without asking
+    # for a sign-in must not make the new login look good.
+    store.save_connector_token("remote", "old-access", token_type="Bearer", client_info={})
+
+    async def answer_without_sign_in(server, provider):
+        return ["search"]
+
+    monkeypatch.setattr("opendot.gateway.upstream.list_remote_tools", answer_without_sign_in)
+    with pytest.raises(LoginError, match="nothing was stored"):
+        login(oauth_server(), store, open_browser=False, paste=True)
+    assert store.get_connector_token("remote").access_token == "old-access"
+
+
+def test_sdk_still_has_the_private_parts_the_provider_overrides():
+    # HostOAuthProvider overrides private methods of the MCP SDK and sets fields
+    # on its context. pyproject.toml pins the SDK's minor version; this test
+    # fails first when a new SDK moves them.
+    import inspect
+
+    from mcp.client.auth import OAuthClientProvider
+    from mcp.client.auth.oauth2 import OAuthContext
+
+    for name in ("_initialize", "_handle_token_response", "_handle_refresh_response"):
+        assert inspect.iscoroutinefunction(getattr(OAuthClientProvider, name)), name
+    fields = set(getattr(OAuthContext, "__dataclass_fields__", {})) or set(
+        inspect.signature(OAuthContext).parameters
+    )
+    for name in (
+        "oauth_metadata",
+        "protected_resource_metadata",
+        "auth_server_url",
+        "current_tokens",
+        "token_expiry_time",
+    ):
+        assert name in fields, name

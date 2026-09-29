@@ -12,6 +12,7 @@ import pytest
 
 from conftest import FakeDocker
 from opendot import browser
+from opendot.backends import CommandResult
 from opendot.config import DEFAULT_BROWSER_TOOLS, Config
 from opendot.container_contract import (
     BROWSER_CHECK_URL,
@@ -244,9 +245,48 @@ def test_check_args_follow_the_sandbox_config(tmp_path: Path) -> None:
     assert pairs(hardened, "--security-opt") == ["no-new-privileges"]
 
 
+class CheckDocker(FakeDocker):
+    """FakeDocker whose `docker image inspect` finds the image (or not, when
+    image_found is false) without using a scripted result."""
+
+    def __init__(self, image_found: bool = True) -> None:
+        super().__init__()
+        self.image_found = image_found
+        self.timeout = False
+
+    def run(self, args, *, input=None, env=None, timeout=None):
+        if list(args[1:3]) == ["image", "inspect"]:
+            if not self.image_found:
+                return CommandResult(list(args), 1, "", "Error: No such image")
+            return CommandResult(list(args), 0, "sha256:" + "b" * 64 + "\n", "")
+        if self.timeout and args[1] == "run":
+            super().run(args, input=input, env=env, timeout=timeout)
+            raise subprocess.TimeoutExpired(args, timeout or 0)
+        return super().run(args, input=input, env=env, timeout=timeout)
+
+
+def test_browser_check_needs_the_image_first(tmp_path: Path) -> None:
+    # A missing image would make `docker run` try to pull that name from a registry.
+    cfg = make_config(tmp_path, {"enabled": True})
+    docker = CheckDocker(image_found=False)
+    ok, message = browser.run_browser_check(cfg, "https://example.com", docker)
+    assert not ok and "opendot build-image" in message
+    assert docker.runs == []
+
+
+def test_browser_check_stops_the_container_after_the_time_limit(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path, {"enabled": True})
+    docker = CheckDocker()
+    docker.timeout = True
+    ok, message = browser.run_browser_check(cfg, "https://example.com", docker)
+    assert not ok and "did not finish" in message
+    name = docker.runs[0].args[docker.runs[0].args.index("--name") + 1]
+    assert docker.runs[-1].args[1:] == ["kill", name]
+
+
 def test_run_browser_check_reads_the_result_line(tmp_path: Path) -> None:
     cfg = make_config(tmp_path, {"enabled": True})
-    docker = FakeDocker()
+    docker = CheckDocker()
     docker.script(0, "browser ok Example Domain\n")
     ok, message = browser.run_browser_check(cfg, "https://example.com", docker)
     assert ok and "Example Domain" in message
@@ -269,7 +309,7 @@ def test_cli_registers_browser_check(tmp_path: Path, monkeypatch, capsys) -> Non
         ["--config", str(cfg_path), "browser", "check", "--url", "https://example.org"]
     )
     assert args.url == "https://example.org"
-    docker = FakeDocker()
+    docker = CheckDocker()
     docker.script(0, "browser ok Example Domain\n")
     monkeypatch.setattr(browser, "_runner", lambda: docker)
     assert args.handler(args) == 0
