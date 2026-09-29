@@ -104,15 +104,25 @@ def test_host_mounts_only_in_work_steps(tmp_path):
         lambda cfg: HostMount(HostMountKind.WORKTREE, make_worktree(cfg), "/opendot/repos/.."),
         # writable where only read-only is allowed
         lambda cfg: HostMount(
-            HostMountKind.MCP, _mkdir(cfg.runs_dir / "t" / "m"), CONTAINER_MCP, True
+            HostMountKind.MCP, _mkdir(cfg.runs_dir / "task-1" / "m"), CONTAINER_MCP, True
         ),
         # a copy without .git
         lambda cfg: HostMount(
-            HostMountKind.WORKTREE, _mkdir(cfg.worktrees_dir / "t" / "x"), "/opendot/repos/x", True
+            HostMountKind.WORKTREE,
+            _mkdir(cfg.worktrees_dir / "task-1" / "x"),
+            "/opendot/repos/x",
+            True,
         ),
         # missing folder
         lambda cfg: HostMount(
-            HostMountKind.ARTIFACTS, cfg.runs_dir / "t" / "missing", CONTAINER_ARTIFACTS
+            HostMountKind.ARTIFACTS, cfg.runs_dir / "task-1" / "missing", CONTAINER_ARTIFACTS
+        ),
+        # not inside a task folder: the transcripts folder, or a copy outside task-<id>
+        lambda cfg: HostMount(
+            HostMountKind.ARTIFACTS, _mkdir(cfg.runs_dir / "transcripts"), CONTAINER_ARTIFACTS
+        ),
+        lambda cfg: HostMount(
+            HostMountKind.MCP, _mkdir(cfg.runs_dir / "transcripts" / "x"), CONTAINER_MCP
         ),
         # relative host path
         lambda cfg: HostMount(HostMountKind.ARTIFACTS, Path("runs/t"), CONTAINER_ARTIFACTS),

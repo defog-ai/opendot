@@ -216,9 +216,14 @@ These are not built yet:
 
 ## Known limits
 
-- **Docker from a snap package does not work.** It refuses containers started
-  with `no-new-privileges` and cannot see folders under `/tmp`. Install Docker
-  from docker.com. Rootless Docker is untested.
+- **Docker from a snap package needs two settings.** Snap Docker refuses
+  containers started with `no-new-privileges`, so set
+  `sandbox.no_new_privileges = false`. It also cannot see mount sources under
+  `/tmp`, so keep `core.state_root` and every `sandbox.readonly_mounts` folder
+  outside `/tmp`. The containers still drop every Linux capability, keep a
+  read-only root file system and run as a non-root user. What you lose is the
+  guard against setuid programs inside the image. Docker from docker.com keeps
+  every setting. Rootless Docker is untested.
 - **Network access is open by default.** Step containers use the Docker network
   `bridge`, so they can reach any host your machine can reach. With
   `sandbox.network = "none"` the model CLIs cannot reach their own API. See

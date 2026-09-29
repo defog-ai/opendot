@@ -34,7 +34,8 @@ Only then does the host post or save anything.
 Each step container:
 
 - starts fresh with `docker run --rm`;
-- drops every Linux capability and sets `no-new-privileges`;
+- drops every Linux capability and, unless `sandbox.no_new_privileges` is
+  false, sets `no-new-privileges`;
 - has a read-only root file system, with size-limited tmpfs folders for `/tmp`
   and the home folder;
 - runs as your user id (or a fixed non-root user when you run OpenDot as root);
@@ -135,8 +136,16 @@ and can change rules and approvals.
 ### Docker itself
 
 A user who can run Docker commands can become root on most machines. OpenDot
-needs Docker, so the user that runs OpenDot has that power. Docker from a snap
-package does not work with OpenDot. Rootless Docker is untested.
+needs Docker, so the user that runs OpenDot has that power. Rootless Docker is
+untested.
+
+Docker from a snap package refuses the `no-new-privileges` option. To use it, set
+`sandbox.no_new_privileges = false` and keep the state folder and read-only
+mounts outside `/tmp`. Without that option, a setuid program inside the image
+could take the user id of its owner (usually root) inside the container. Every capability is
+still dropped, so that owner has no extra kernel privileges, and the root file
+system stays read-only. This setting is on by default; turn it off only when
+your Docker requires it.
 
 ## Files OpenDot writes
 

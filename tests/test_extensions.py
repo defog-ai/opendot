@@ -112,3 +112,30 @@ def test_loader_skips_missing_and_keeps_order(config, monkeypatch):
 
 def test_default_loader_runs_before_features_exist(config):
     assert isinstance(load_step_extensions(config), list)
+
+
+def test_feature_cli_and_doctor_hooks(config, monkeypatch):
+    import argparse
+
+    module = types.ModuleType("opendot_test_cli")
+    module.register_cli = lambda sub: sub.add_parser("widgets")
+    module.doctor_checks = lambda cfg: [("widgets", True, "ok")]
+    bare = types.ModuleType("opendot_test_bare")
+    monkeypatch.setitem(sys.modules, "opendot_test_cli", module)
+    monkeypatch.setitem(sys.modules, "opendot_test_bare", bare)
+    monkeypatch.setattr(
+        ext_module,
+        "FEATURE_CLI_MODULES",
+        ("opendot_missing_cli", "opendot_test_bare", "opendot_test_cli"),
+    )
+    parser = argparse.ArgumentParser()
+    ext_module.register_feature_cli(parser.add_subparsers(dest="cmd"))
+    assert parser.parse_args(["widgets"]).cmd == "widgets"
+    assert ext_module.doctor_checks(config) == [("widgets", True, "ok")]
+
+
+def test_default_cli_hooks_run_before_features_exist(config):
+    import argparse
+
+    ext_module.register_feature_cli(argparse.ArgumentParser().add_subparsers())
+    assert isinstance(ext_module.doctor_checks(config), list)

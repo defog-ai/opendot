@@ -26,12 +26,14 @@ action (opendot.actions) and goes through rules, review and approval.
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import logging
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Protocol
 
 from opendot.models import Attempt, Step, StepPlan, Task
@@ -41,12 +43,16 @@ if TYPE_CHECKING:
     from opendot.store import Store
 
 __all__ = [
+    "FEATURE_CLI_MODULES",
     "FEATURE_STEP_MODULES",
     "ExtensionError",
     "StepContext",
     "StepExtension",
     "StepExtensions",
+    "doctor_checks",
+    "load_feature_modules",
     "load_step_extensions",
+    "register_feature_cli",
     "new_step_token",
     "step_run_dir",
     "with_prompt_notes",
@@ -60,6 +66,14 @@ FEATURE_STEP_MODULES = (
     "opendot.github.step",
     "opendot.browser",
     "opendot.gateway.step",
+)
+
+# Each module exposes register_cli(subparsers) and doctor_checks(config), where
+# doctor_checks returns a list of (name, ok, detail) tuples.
+FEATURE_CLI_MODULES = (
+    "opendot.github.cli",
+    "opendot.browser",
+    "opendot.gateway.cli",
 )
 
 
@@ -116,18 +130,42 @@ def with_prompt_notes(prompt: str, plan: StepPlan | None) -> str:
     return f"{prompt.rstrip()}\n\n## Tools and folders for this step\n\n{notes}\n"
 
 
-def load_step_extensions(config: Config) -> list[StepExtension]:
-    """The active extensions from FEATURE_STEP_MODULES, in order."""
-    found: list[StepExtension] = []
-    for module_name in FEATURE_STEP_MODULES:
+def load_feature_modules(names: Sequence[str], attribute: str) -> list[ModuleType]:
+    """The modules in names that exist and define attribute, in order. A module
+    that is not installed is skipped; any other import error is raised."""
+    found: list[ModuleType] = []
+    for module_name in names:
         try:
             module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
             if exc.name is not None and module_name.startswith(exc.name):
                 continue
             raise
+        if hasattr(module, attribute):
+            found.append(module)
+    return found
+
+
+def load_step_extensions(config: Config) -> list[StepExtension]:
+    """The active extensions from FEATURE_STEP_MODULES, in order."""
+    found: list[StepExtension] = []
+    for module in load_feature_modules(FEATURE_STEP_MODULES, "step_extensions"):
         found.extend(module.step_extensions(config))
     return found
+
+
+def register_feature_cli(subparsers: argparse._SubParsersAction) -> None:
+    """Let each feature module in FEATURE_CLI_MODULES add its subcommands."""
+    for module in load_feature_modules(FEATURE_CLI_MODULES, "register_cli"):
+        module.register_cli(subparsers)
+
+
+def doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
+    """Every feature module's doctor checks as (name, ok, detail) tuples."""
+    results: list[tuple[str, bool, str]] = []
+    for module in load_feature_modules(FEATURE_CLI_MODULES, "doctor_checks"):
+        results.extend(module.doctor_checks(config))
+    return results
 
 
 class StepExtensions:

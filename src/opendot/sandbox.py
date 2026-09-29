@@ -197,6 +197,7 @@ def check_mounts(step: Step, mounts: Sequence[Mount], config: Config) -> list[Mo
 
 
 _HOST_MOUNT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_TASK_FOLDER = re.compile(r"^task-\d+$")
 
 
 def _host_mount_rule(kind: HostMountKind, config: Config) -> tuple[Path, str, bool, bool]:
@@ -223,7 +224,8 @@ def check_host_mounts(step: Step, mounts: Sequence[HostMount], config: Config) -
       INSTRUCTIONS  connectors/...  -> /opendot/instructions/<name>   read-only
     The host folder must be a real folder strictly inside its base (no symbolic
     link on the way), which keeps out the database, worker.lock, sessions/,
-    logs/ and the control clones in repos/. A WORKTREE folder must hold a .git
+    logs/ and the control clones in repos/. Below worktrees/ and runs/ the first
+    folder must be task-<id>, which keeps out runs/transcripts/. A WORKTREE folder must hold a .git
     folder, which docker_run_args mounts read-only on top.
     """
     mounts = list(mounts)
@@ -245,6 +247,12 @@ def check_host_mounts(step: Step, mounts: Sequence[HostMount], config: Config) -
                 f"a {kind.value} mount must be a folder inside {base}, "
                 f"reached without symbolic links: {raw_host}"
             )
+        if kind is not HostMountKind.INSTRUCTIONS:
+            first = host_resolved.relative_to(base.expanduser().resolve()).parts[0]
+            if not _TASK_FOLDER.match(first):
+                raise SandboxError(
+                    f"a {kind.value} mount must come from a task-<id> folder: {raw_host}"
+                )
         container = PurePosixPath(mount.container)
         if named:
             if container.parent != PurePosixPath(place) or not _HOST_MOUNT_NAME.match(
