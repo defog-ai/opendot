@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and state
+opendot.toml
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+state/
+runs/
+
+# Editors and systems
+.idea/
+.vscode/
+.DS_Store

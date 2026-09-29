@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenDot reflect step output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "notes"],
+  "properties": {
+    "summary": {"type": "string"},
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "note_id", "subject", "text", "source_message_id"],
+        "properties": {
+          "op": {"type": "string", "enum": ["add", "edit", "delete"]},
+          "note_id": {"type": ["integer", "null"]},
+          "subject": {"type": ["string", "null"]},
+          "text": {"type": ["string", "null"]},
+          "source_message_id": {"type": ["integer", "null"]}
+        }
+      }
+    }
+  }
+}

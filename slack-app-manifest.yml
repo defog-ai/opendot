@@ -1,0 +1,31 @@
+# Slack app manifest for OpenDot.
+#
+# Create the app at https://api.slack.com/apps with "From an app manifest",
+# paste this file, install it to your workspace, and put the Bot User OAuth
+# Token in the environment variable named by channels.slack.bot_token_env.
+# Then invite the bot to each channel listed in channels.slack.channels.
+#
+# OpenDot polls the Web API, so the app needs no event subscriptions, no
+# request URL and no Socket Mode. The private-channel scopes (groups:*) are
+# needed only if you list private channels.
+display_information:
+  name: OpenDot
+  description: A self-hosted assistant that works on requests in threads.
+features:
+  bot_user:
+    display_name: opendot
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - chat:write
+      - reactions:write
+      - files:write
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

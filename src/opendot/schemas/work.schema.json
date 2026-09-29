@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenDot work step output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "reply", "wait_until", "actions"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["done", "needs_input", "wait", "continue"]
+    },
+    "summary": {"type": "string"},
+    "reply": {"type": "string"},
+    "wait_until": {"type": ["string", "null"]},
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "arguments_json"],
+        "properties": {
+          "kind": {"type": "string"},
+          "arguments_json": {"type": "string"}
+        }
+      }
+    }
+  }
+}

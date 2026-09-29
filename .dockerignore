@@ -1,0 +1,3 @@
+# The image is built from the Dockerfile on stdin with no context.
+# If a context is ever used, send nothing from this folder.
+*

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests and lint (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Tests
+        run: uv run pytest -q
+
+  image:
+    name: Build the step image (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Build
+        # The Dockerfile is sent on stdin with no build context, as `opendot build-image` does.
+        run: docker build -t opendot-worker:ci - < docker/Dockerfile
+      - name: Verify
+        run: |
+          uv sync --locked
+          cat > "$RUNNER_TEMP/opendot.toml" <<TOML
+          [core]
+          state_root = "$RUNNER_TEMP/state"
+          [sandbox]
+          image = "opendot-worker:ci"
+          TOML
+          uv run opendot --config "$RUNNER_TEMP/opendot.toml" verify-image
