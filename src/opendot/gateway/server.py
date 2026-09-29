@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -79,6 +80,14 @@ class _RpcError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+# Python 3.13 stats and later deletes a server socket by the name it was bound
+# to. A long path is bound through /proc/self/fd/<n>/, and that folder handle is
+# closed by then, so the stat fails. _close_sockets deletes the files instead.
+UNIX_SERVER_OPTIONS: dict[str, Any] = (
+    {"cleanup_socket": False} if sys.version_info >= (3, 13) else {}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +393,9 @@ class Gateway:
                         handlers.discard(task)
 
             servers.append(
-                await asyncio.start_unix_server(on_connect, sock=sock, limit=READER_LIMIT)
+                await asyncio.start_unix_server(
+                    on_connect, sock=sock, limit=READER_LIMIT, **UNIX_SERVER_OPTIONS
+                )
             )
         for upstream in self._upstreams.values():
             upstream.start()
