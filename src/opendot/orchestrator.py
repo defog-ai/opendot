@@ -8,16 +8,10 @@ One task moves through these stages:
    not match is recorded and never acted on;
 4. preparation: the host builds each proposed action with its own handler;
    an unknown kind or bad fields are refused;
-5. review: an independent reviewer approves, denies or escalates each action;
-6. rules: the operator's rules and fixed floors give each action a level;
-7. approval: an action at level ask parks the task until the requester answers;
-8. act: allowed and approved actions run;
-9. report: replies and host notices go out through the outbox;
-10. reflect (optional): after a task with feedback, a reflect step proposes
-    note changes, which go through the same checks.
-
-Order detail: the rules give each action its level before the review, because
-the reviewer is told that level, and a verdict can only make it stricter.
+5. act: every action that the host could build runs at once;
+6. report: replies and host notices go out through the outbox;
+7. reflect (optional): after a task with feedback, a reflect step proposes
+   note changes, which go through the same checks.
 
 A task asks to wait with status "wait" and wait_until. It is parked in state
 waiting; tick() wakes it when the time comes and the next step resumes the same
@@ -47,14 +41,6 @@ from opendot.actions import (
     PreparedAction,
     payload_digest,
 )
-from opendot.approvals import (
-    ApprovalMismatch,
-    NotAllowedToDecide,
-    action_matches_approval,
-    consume_approval,
-    request_approval,
-)
-from opendot.approvals import decide as decide_approval
 from opendot.backends import (
     Backend,
     BackendError,
@@ -65,19 +51,14 @@ from opendot.backends import (
 from opendot.channels import Channel, ChannelError
 from opendot.extensions import ExtensionError, StepContext, StepExtensions, with_prompt_notes
 from opendot.models import (
-    ActionRecord,
     ActionStatus,
-    Approval,
-    ApprovalStatus,
     Attempt,
     AttemptStatus,
     Destination,
     IncomingMessage,
-    Level,
     Message,
     MessageKind,
     Mount,
-    RuleStatus,
     Step,
     StepPlan,
     Task,
@@ -86,9 +67,7 @@ from opendot.models import (
     from_iso,
 )
 from opendot.notes import render_snapshot, snapshot_for_task
-from opendot.reviewer import ReviewItem, review_actions
-from opendot.rules import RuleEngine, is_operator
-from opendot.store import LeaseLost, NotFound, StoreError
+from opendot.store import LeaseLost, NotFound
 
 if TYPE_CHECKING:
     from opendot.config import Config
@@ -111,14 +90,19 @@ HELP_TEXT = (
     "Start a task with a new message. In a task's thread you can reply with:\n"
     "- an answer or a correction, which the task reads before its next step;\n"
     "- stop (or cancel): end the task;\n"
-    "- approve N / deny N: decide on approval request N;\n"
     "- pause / resume: ignore or follow this thread again;\n"
     "- queue: list unfinished tasks;\n"
     "- help: show this text.\n"
     f"To start new work in the thread of a finished task, mention {instructions.MENTION_MARKER}."
 )
 
-_APPROVAL_RE = re.compile(r"^(approve|deny)\s+#?(\d+)$")
+# "approve N" and "deny N" answered approval requests before 0.3. They are still
+# recognised, so that an old habit gets an explanation instead of reaching a task.
+_OLD_APPROVAL_RE = re.compile(r"^(approve|deny)\s+#?(\d+)$")
+NO_APPROVALS_TEXT = (
+    "OpenDot no longer asks for approvals. A task's actions run as soon as it proposes them."
+)
+OPERATOR_CHANNEL = "cli"
 _SIMPLE_COMMANDS = {
     "stop": "stop",
     "cancel": "stop",
@@ -131,14 +115,13 @@ _SIMPLE_COMMANDS = {
 
 
 class Command:
-    """A parsed thread command. name is stop, queue, pause, resume, help, approve or deny."""
+    """A parsed thread command: stop, queue, pause, resume, help, or old_approval."""
 
-    def __init__(self, name: str, approval_id: int | None = None):
+    def __init__(self, name: str):
         self.name = name
-        self.approval_id = approval_id
 
     def __repr__(self) -> str:
-        return f"Command({self.name!r}, {self.approval_id!r})"
+        return f"Command({self.name!r})"
 
 
 def _strip_marker(text: str) -> str:
@@ -150,10 +133,14 @@ def parse_command(text: str) -> Command | None:
     words = _strip_marker(text).lower().strip(" .!")
     if words in _SIMPLE_COMMANDS:
         return Command(_SIMPLE_COMMANDS[words])
-    match = _APPROVAL_RE.match(words)
-    if match:
-        return Command(match.group(1), int(match.group(2)))
+    if _OLD_APPROVAL_RE.match(words):
+        return Command("old_approval")
     return None
+
+
+def is_operator(config: Config, *, channel: str, actor: str) -> bool:
+    """True only for the configured command-line user on the local command line."""
+    return channel == OPERATOR_CHANNEL and actor == config.cli.user
 
 
 def _default_owner() -> str:
@@ -163,7 +150,7 @@ def _default_owner() -> str:
 class Orchestrator:
     """Runs tasks for one store. One process runs one Orchestrator at a time.
 
-    worker, reviewer: the backends for the work (and reflect) step and the review step.
+    worker: the backend for the work and reflect steps.
     channels: channel objects by kind ("cli", "slack").
     registry: the host's action handlers; opendot.actions.build_registry(config)
         in production.
@@ -177,7 +164,6 @@ class Orchestrator:
         config: Config,
         *,
         worker: Backend,
-        reviewer: Backend,
         channels: Mapping[str, Channel],
         registry: ActionRegistry,
         owner: str | None = None,
@@ -188,7 +174,6 @@ class Orchestrator:
         self.store = store
         self.config = config
         self.worker = worker
-        self.reviewer = reviewer
         self.channels = dict(channels)
         self.registry = registry
         self.owner = owner or _default_owner()
@@ -208,14 +193,11 @@ class Orchestrator:
         from opendot.actions import build_registry
         from opendot.backends import create_backend
         from opendot.channels import enabled_channels
-        from opendot.rules import sync_config_rules
 
-        sync_config_rules(store, config)
         return cls(
             store,
             config,
             worker=create_backend(config, "worker"),
-            reviewer=create_backend(config, "reviewer"),
             channels={c.name: c for c in enabled_channels(config)},
             registry=build_registry(config),
             extensions=StepExtensions.from_config(config),
@@ -228,7 +210,7 @@ class Orchestrator:
         return self.config.core.lease_minutes * 60
 
     def notice(self, destination: Destination, text: str, *, task_id: int | None = None) -> None:
-        """A host-written message. It goes straight to the outbox, without review."""
+        """A host-written message. It goes straight to the outbox."""
         self.store.enqueue_outbox(destination, text, task_id=task_id)
 
     def _context(self, task: Task) -> ActionContext:
@@ -438,32 +420,14 @@ class Orchestrator:
                 self.stop_task(active.id, by=message.author)
             else:
                 self.store.log_event("task.stop_ignored", {"by": message.author}, task_id=active.id)
-        elif command.approval_id is not None:
-            self._decide_from_message(message, command, where)
+        elif name == "old_approval":
+            self.notice(where, NO_APPROVALS_TEXT)
         return self.store.get_message(stored.id)
-
-    def _decide_from_message(
-        self, message: IncomingMessage, command: Command, where: Destination
-    ) -> None:
-        approval_id = command.approval_id
-        granted = command.name == "approve"
-        try:
-            self.decide(
-                approval_id, granted=granted, decided_by=message.author, channel=message.channel
-            )
-        except NotAllowedToDecide:
-            self.notice(where, f"Only the requester can decide approval {approval_id}.")
-            return
-        except (NotFound, StoreError) as exc:
-            self.notice(where, f"Approval {approval_id} cannot be decided: {exc}")
-            return
-        self.notice(where, f"Approval {approval_id} {'granted' if granted else 'denied'}.")
 
     def _queue_text(self) -> str:
         unfinished = [
             TaskState.QUEUED,
             TaskState.RUNNING,
-            TaskState.AWAITING_APPROVAL,
             TaskState.AWAITING_REPLY,
             TaskState.WAITING,
         ]
@@ -476,22 +440,6 @@ class Orchestrator:
         return "\n".join(lines)
 
     # -- operator and requester decisions --------------------------------------
-
-    def decide(self, approval_id: int, *, granted: bool, decided_by: str, channel: str) -> Approval:
-        """Record a decision; requeue the task when no approval is left pending."""
-        approval = decide_approval(
-            self.store,
-            self.config,
-            approval_id,
-            granted=granted,
-            decided_by=decided_by,
-            channel=channel,
-        )
-        task = self.store.get_task(approval.task_id)
-        pending = self.store.list_approvals(task.id, ApprovalStatus.PENDING)
-        if task.state is TaskState.AWAITING_APPROVAL and not pending:
-            self.store.set_task_state(task.id, TaskState.QUEUED)
-        return approval
 
     def stop_task(self, task_id: int, *, by: str) -> Task:
         """End a task now. A step in progress sees the change and stops."""
@@ -506,11 +454,10 @@ class Orchestrator:
     # -- the loop --------------------------------------------------------------
 
     def tick(self, max_tasks: int = 5) -> dict[str, int]:
-        """One pass: expire approvals, wake tasks, start schedules, read channels,
-        run up to max_tasks task turns, and deliver the outbox."""
+        """One pass: wake tasks, start schedules, read channels, run up to
+        max_tasks task turns, and deliver the outbox."""
         from opendot.schedules import run_due_schedules
 
-        expired = self.store.expire_approvals()
         woken = len(self.store.wake_due())
         started = len(run_due_schedules(self.store))
         received = len(self.ingest())
@@ -521,7 +468,6 @@ class Orchestrator:
             ran += 1
         delivered = self.flush_outbox()
         return {
-            "approvals_expired": expired,
             "woken": woken,
             "schedules_started": started,
             "messages": received,
@@ -545,31 +491,12 @@ class Orchestrator:
         return self.store.get_task(task.id)
 
     def _advance(self, task: Task) -> None:
-        waiting = self.store.list_actions(task.id, ActionStatus.AWAITING_APPROVAL)
-        if waiting:
-            if not self._resolve_approvals(task, waiting):
-                self._finish(task, TaskState.AWAITING_APPROVAL)
-                return
-            self._after_actions(task)
-            return
-
         budget = self._budget_exceeded(task)
         if budget is not None:
             self._stop_for(task, f"budget reached: {budget}")
             return
         attempt = self._work_step(task)
         if attempt is None:
-            return
-        self._after_proposals(task, attempt)
-
-    def _after_proposals(self, task: Task, attempt: Attempt) -> None:
-        if not self._still_running(task.id):
-            return
-        if self.store.list_actions(task.id, ActionStatus.AWAITING_APPROVAL):
-            if self.store.list_approvals(task.id, ApprovalStatus.PENDING):
-                self._finish(task, TaskState.AWAITING_APPROVAL)
-            else:
-                self._finish(task, TaskState.QUEUED)
             return
         self._after_actions(task)
 
@@ -597,9 +524,8 @@ class Orchestrator:
         status = output["status"]
         if status == "done":
             if self._should_reflect(task):
-                reflect = self._reflect_step(task, output)
-                if reflect is not None:
-                    self._after_proposals(task, reflect)
+                if self._reflect_step(task, output) is not None:
+                    self._after_actions(task)
                 return
             self._done(task, summary=summary)
         elif status == "needs_input":
@@ -616,8 +542,8 @@ class Orchestrator:
         try:
             when = from_iso(str(wait_until))
         except (TypeError, ValueError):
-            # The value is model output, and failure notices are not reviewed, so it
-            # goes only into the event log.
+            # The value is model output, and a failure notice holds only the host's
+            # own text, so the value goes only into the event log.
             self.store.log_event(
                 "task.bad_wait_until", {"value": str(wait_until)[:200]}, task_id=task.id
             )
@@ -905,7 +831,7 @@ class Orchestrator:
         if reply:
             kind = KIND_NOTIFY if task.schedule_id is not None else KIND_REPLY
             proposals.append(({"kind": kind, "text": reply}, kind, ""))
-        self._handle_proposals(task, attempt, proposals, shown)
+        self._handle_proposals(task, attempt, proposals)
         return attempt
 
     def _should_reflect(self, task: Task) -> bool:
@@ -950,7 +876,7 @@ class Orchestrator:
             proposals.append(({**fields, "kind": KIND_NOTE_WRITE}, KIND_NOTE_WRITE, ""))
         if not self._still_running(task.id):
             return None
-        self._handle_proposals(self.store.get_task(task.id), attempt, proposals, [])
+        self._handle_proposals(self.store.get_task(task.id), attempt, proposals)
         return attempt
 
     # -- actions ---------------------------------------------------------------
@@ -963,7 +889,6 @@ class Orchestrator:
             target="",
             payload=payload,
             payload_digest=payload_digest(str(kind), "", payload),
-            level=Level.HAND_OFF,
             attempt_id=attempt.id,
             status=ActionStatus.REFUSED,
         )
@@ -979,12 +904,12 @@ class Orchestrator:
         task: Task,
         attempt: Attempt,
         proposals: list[tuple[dict[str, Any] | None, str, str]],
-        messages: list[Message],
     ) -> None:
+        """Build each proposed action with its handler and run the ones that were built."""
         ctx = self._context(task)
-        engine = RuleEngine.from_store(self.registry, self.store)
-        items: list[ReviewItem] = []
         for proposal, kind, raw in proposals:
+            if not self._still_running(task.id):
+                return
             if proposal is None:
                 self._refuse(task, attempt, kind, raw, "arguments_json is not a JSON object")
                 continue
@@ -993,86 +918,15 @@ class Orchestrator:
             except ActionError as exc:
                 self._refuse(task, attempt, kind, raw or json.dumps(proposal), str(exc))
                 continue
-            level = engine.decide(prepared, ctx).level
             record = self.store.record_action(
                 task.id,
                 kind=prepared.kind,
                 target=prepared.target,
                 payload=prepared.payload,
                 payload_digest=prepared.digest,
-                level=level,
                 attempt_id=attempt.id,
             )
-            items.append(ReviewItem(action_id=record.id, action=prepared, level=level))
-        if not items:
-            return
-
-        review = review_actions(
-            self.store,
-            self.reviewer,
-            self.config,
-            task,
-            items,
-            policy_text=instructions.load_prompt(Step.REVIEW),
-            messages=messages,
-            rules=self.store.list_rules(RuleStatus.ACTIVE),
-            output_schema=instructions.load_schema(Step.REVIEW),
-        )
-        if review.stop_reason:
-            for item in items:
-                outcome = review.outcome_for(item.action_id)
-                self.store.set_action_status(
-                    item.action_id,
-                    ActionStatus.DENIED,
-                    error=outcome.reason if outcome.denied else "the task was stopped",
-                )
-            self._stop_for(task, review.stop_reason)
-            return
-        if not self._still_running(task.id):
-            return
-
-        for item in items:
-            outcome = review.outcome_for(item.action_id)
-            if outcome.denied:
-                self.store.set_action_status(
-                    item.action_id, ActionStatus.DENIED, error=outcome.reason
-                )
-                continue
-            self._apply_level(task, ctx, item.action_id, item.action, outcome.level)
-
-    def _apply_level(
-        self, task: Task, ctx: ActionContext, action_id: int, action: PreparedAction, level: Level
-    ) -> None:
-        if level is Level.ALLOW:
-            self.store.set_action_status(action_id, ActionStatus.APPROVED, level=level)
-            self._execute(ctx, action_id, action)
-            return
-        if level is Level.HAND_OFF:
-            self.store.set_action_status(action_id, ActionStatus.HANDED_OFF, level=level)
-            material = json.dumps(action.payload, ensure_ascii=False, indent=2)
-            self.notice(
-                task.destination,
-                f"Task {task.id} prepared an action that I do not carry out myself "
-                f"({action.kind}, target {action.target}). Here is the material if you "
-                f"want to do it yourself:\n{material}",
-                task_id=task.id,
-            )
-            return
-        # preapproved and ask: run only with an approval that covers this exact action.
-        if consume_approval(self.store, task, action) is not None:
-            self.store.set_action_status(action_id, ActionStatus.APPROVED, level=level)
-            self._execute(ctx, action_id, action)
-            return
-        approval = request_approval(self.store, task, action, action_id=action_id)
-        self.store.set_action_status(action_id, ActionStatus.AWAITING_APPROVAL, level=level)
-        material = json.dumps(action.payload, ensure_ascii=False, indent=2)
-        self.notice(
-            task.destination,
-            f"Task {task.id} wants to run {action.kind} (target {action.target}):\n"
-            f"{material}\n"
-            f'Reply "approve {approval.id}" or "deny {approval.id}".',
-            task_id=task.id,
-        )
+            self._execute(ctx, record.id, prepared)
 
     def _execute(self, ctx: ActionContext, action_id: int, action: PreparedAction) -> None:
         try:
@@ -1096,35 +950,6 @@ class Orchestrator:
             {"action_id": action_id, "kind": action.kind},
             task_id=ctx.task.id,
         )
-
-    def _resolve_approvals(self, task: Task, waiting: list[ActionRecord]) -> bool:
-        """Run or deny parked actions whose approval was decided. False while any is pending."""
-        approvals = {a.action_id: a for a in self.store.list_approvals(task.id)}
-        if any(
-            approvals.get(r.id) is not None and approvals[r.id].status is ApprovalStatus.PENDING
-            for r in waiting
-        ):
-            return False
-        ctx = self._context(task)
-        for record in waiting:
-            approval = approvals.get(record.id)
-            if approval is None or approval.status is not ApprovalStatus.GRANTED:
-                status = approval.status.value if approval else "missing"
-                self.store.set_action_status(
-                    record.id, ActionStatus.DENIED, error=f"approval {status}"
-                )
-                continue
-            try:
-                handler = self.registry.get(record.kind)
-                action_matches_approval(approval, record, outward=handler.outward)
-            except (ApprovalMismatch, ActionError) as exc:
-                self.store.set_action_status(record.id, ActionStatus.DENIED, error=str(exc))
-                continue
-            self.store.mark_approval_used(approval.id)
-            self.store.set_action_status(record.id, ActionStatus.APPROVED)
-            prepared = PreparedAction(record.kind, record.target, record.payload, handler.outward)
-            self._execute(ctx, record.id, prepared)
-        return True
 
     # -- outbox ----------------------------------------------------------------
 

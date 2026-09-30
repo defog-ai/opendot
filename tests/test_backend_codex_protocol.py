@@ -452,14 +452,3 @@ def test_transcript_is_redacted(tmp_path: Path) -> None:
     assert process.env == {"TOOL_SETTING": "value-of-setting-1"}
     assert "TOOL_SETTING" in process.args
     assert not any("value-of-setting-1" in a for a in process.args)
-
-
-def test_review_step_refuses_env_and_mounts_read_only_work(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path, env_allowlist=["TOOL_SETTING"])
-    docker = FakeDocker()
-    with pytest.raises(BackendError):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {"TOOL_SETTING": "x"}, [])
-    docker.script_process(happy_lines())
-    backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
-    mounts = [a for a in docker.spawned[0].args if "dst=/work" in a]
-    assert mounts and mounts[0].endswith(",readonly")

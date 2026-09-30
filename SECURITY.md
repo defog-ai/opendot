@@ -21,18 +21,17 @@ out of every step container:
 - the Slack bot token;
 - the GitHub token and the host user's ssh agent;
 - connector keys and connector OAuth tokens;
-- your rules, approval records and other people's notes;
+- other people's notes;
 - the Docker socket;
 - host environment variables, unless you name them in `sandbox.env_allowlist`
-  (work steps only; review steps never get any). The allowlist may not name the
+  (work steps only; reflect steps never get any). The allowlist may not name the
   Slack token variable, the Claude Code login variable, the GitHub token
   variable or any connector key variable.
 
 The model cannot run an action by itself. It proposes actions in its JSON
-output. The host refuses unknown action kinds, builds each action's target from
-the task (not from the model's text), applies your rules and the fixed floors,
-asks a separate reviewer, and waits for your approval when a rule says "ask".
-Only then does the host post or save anything.
+output. The host refuses unknown action kinds and builds each action's target
+from the task (not from the model's text). Then it runs the action at once. The
+host does not ask you first, and no second model checks the action.
 
 Each step container:
 
@@ -44,11 +43,10 @@ Each step container:
 - runs as your user id (or a fixed non-root user when you run OpenDot as root);
 - has CPU, memory and process limits;
 - mounts only its work folder and its CLI session folder, plus any read-only
-  folders you list in `sandbox.readonly_mounts`. In review steps the work folder
-  is read-only.
+  folders you list in `sandbox.readonly_mounts`.
 
-Work steps can get more mounts from the features you turn on. Review and reflect
-steps never get them. Each one comes from a fixed folder under the state folder:
+Work steps can get more mounts from the features you turn on. Reflect steps
+never get them. Each one comes from a fixed folder under the state folder:
 
 | Place in the container | Mode | When |
 | --- | --- | --- |
@@ -59,7 +57,7 @@ steps never get them. Each one comes from a fixed folder under the state folder:
 
 Text the model writes into a repository copy or the artifacts folder stays on
 the host after the step. The host reads a repository copy only to build a
-proposed commit, which goes through the public text check and your approval.
+proposed commit, which goes through your checks and the public text check.
 
 ## What the host does not protect
 
@@ -94,9 +92,12 @@ A step needs the login of its own CLI:
   stays valid. It does this only when the new file has the same `auth_mode`,
   the same API key field and the same `tokens.account_id`, and your own file
   did not change during the step. Otherwise the new file is deleted.
-- **Claude Code:** OpenDot passes the variable named in
-  `backend.claude_code.token_env` (default `CLAUDE_CODE_OAUTH_TOKEN`) into the
-  container.
+- **Claude Code:** OpenDot passes the token into the container. It takes the
+  token from the variable named in `backend.claude_code.token_env` (default
+  `CLAUDE_CODE_OAUTH_TOKEN`) or, when that variable is not set, from the file
+  `backend.claude_code.token_file` (default `~/.config/opendot/claude-token`)
+  that `opendot login claude` writes with mode 600. OpenDot refuses to read
+  that file when another user can read it or when it is a symbolic link.
 - **opencode:** OpenDot copies only the entry for the provider in the model
   name from your opencode login file (`backend.opencode.auth_file`) into the
   session folder, and deletes it when the step ends. A refreshed OAuth login is
@@ -108,27 +109,30 @@ send it elsewhere. Use a login that you can revoke, and revoke it if you think a
 step was misused. Prefer a token from `claude setup-token` or an API key with a
 spending limit over your main account password.
 
-### Review steps can run commands
+### Every proposed action runs
 
-The reviewer is a model CLI too. Codex review steps can still run shell commands
-inside their container. The work folder is read-only in review steps and no host
-variables are passed, but the network follows your config. Claude Code and
-opencode review steps get no tools.
+OpenDot has no approvals, no rules and no reviewer. When the model proposes a
+reply, a note, a schedule, a push, a pull request, an issue, a comment or a
+connector `write` call, the host runs it as soon as the step ends. A model that
+reads hostile text (a web page, a file, a connector result) can be led to
+propose one of these actions, and it will run.
 
-### The reviewer is a model
+What still limits an action:
 
-The reviewer is told to judge each action against the requester's own request
-and to treat all supplied text as untrusted evidence. It can still be wrong or be
-misled. A failed or unreadable review counts as a denial, and a task stops after
-repeated denials. Your rules and approvals are the checks that do not depend on
-a model: use `ask` for actions you want to see first.
+- the host runs only the action kinds it knows, and builds each target itself;
+- a push needs your repository checks to pass, never goes to the default
+  branch and, for a public repository, must pass the public text check;
+- a connector tool runs only when you marked it `write` in your config;
+- `opendot stop N` stops a task, and the host runs none of its remaining
+  actions.
+
+Connect only the repositories, channels and connector `write` tools that you
+accept this for.
 
 ### Who may give work
 
 On Slack, only the member ids in `channels.slack.allowed_users` can create
-tasks, and an empty list allows nobody. An approval can be decided only by the
-task's requester, on the channel the task came from, or by the operator on the
-local command line. Messages from other people in a task's thread are not given
+tasks, and an empty list allows nobody. Messages from other people in a task's thread are not given
 to the model. Text that the requester pastes, and files or pages that the model
 reads, can still hold hostile instructions.
 
@@ -136,25 +140,17 @@ A follow-up from a different allowed user in a finished thread starts a new
 model session with that user's own notes. It does not continue the earlier
 requester's session.
 
-### What is posted before you approve
-
-When an action needs your approval, or is handed off to you, OpenDot posts the
-proposed payload (for example the text of a reply) in the task's thread so you
-can judge it. In a shared Slack channel, the other members of the channel can
-read that text before you decide. The reviewer has already approved the action
-at that point, but you have not.
-
 ### Notes the model writes
 
-A note is read by every later task for the same requester, so `note.write`
-defaults to `ask`. It defaults to `allow` when the proposal cites, as its
-source, a message that the requester wrote in the current task. The host checks
-that the cited message belongs to this task and to this requester. It does not
-check that the note text matches the message, because a note is the model's
-summary of it. The reviewer still sees every note write, and a rule can set
-`note.write` to `ask` for all notes.
-On the command line, anyone who can run `opendot` as your user is the operator
-and can change rules and approvals.
+A note is read by every later task for the same requester, and the host saves
+every note the model proposes. When the proposal cites, as its source, a
+message that the requester wrote in the current task, the host checks that the
+message belongs to this task and to this requester, and records the note as
+coming from the requester. Otherwise it records the note as coming from the
+model. It does not check that the note text matches the message, because a note
+is the model's summary of it. `opendot notes` lists every note, and you can
+change or remove any of them.
+On the command line, anyone who can run `opendot` as your user is the operator.
 
 ### Docker itself
 
@@ -194,8 +190,8 @@ The GitHub token never enters a container. The model edits files in its copy
 of the repository; the `.git` folder of that copy is read-only in the
 container, so the model cannot commit, push or change the remote. The host
 commits, runs the checks in a separate container with no token, no host
-variables and the repository's `check_network` (`none` by default), and pushes only
-after you approve the exact commit and tree.
+variables and the repository's `check_network` (`none` by default), and pushes
+only when the checks pass. It does not ask you before it pushes.
 
 - **Use a fine-grained token.** Give it write access to contents, pull
   requests and issues of the listed repositories only. Revoke it if you think
@@ -209,18 +205,18 @@ after you approve the exact commit and tree.
   body contain a home-folder path, an email address outside the example
   domains, text shaped like a token, a link to a coding session or one of your
   `github.private_markers`. It matches patterns. It does not find every secret
-  or every private fact. Read the diff before you approve.
-- **The diff you approve is the whole change.** The host shows every text line
-  of the change and does not use git's diff drivers, text conversion or
+  or every private fact, and nobody reads the diff before the push.
+- **The diff in the task log is the whole change.** The host records every text
+  line of the change and does not use git's diff drivers, text conversion or
   `.gitattributes` to shorten it. When the change edits `.gitattributes`, the
-  approval shows the new file. A change whose diff is longer than
+  log shows the new file. A change whose diff is longer than
   `github.max_diff_chars` (20,000 characters by default) is refused, so the
-  approval never shows a cut diff. Ask for smaller commits, or raise the
-  limit.
+  log never holds a cut diff and the public text check reads every line. Ask
+  for smaller commits, or raise the limit.
 - **Binary files are refused for a public repository.** Git shows no lines for
   a binary file, so the public text check cannot read it. A change that adds or
   edits a binary file in a public repository is refused unless you set
-  `github.allow_binary_public = true`. For a private repository the approval
+  `github.allow_binary_public = true`. For a private repository the task log
   lists each binary file with its size.
 - **The host only takes over its own pull requests, issues and comments.** A
   pull request, issue or comment that another account opened is never edited,
@@ -233,9 +229,8 @@ after you approve the exact commit and tree.
   host cannot ask a server whether the repository is public. It trusts the
   `visibility` you set. If you set `private` on a public remote, the public
   text check does not run.
-- **Pushes and pull requests always ask.** Their floor is `ask`, and no rule
-  can lower it. Issues and comments can be lowered to `preapproved`, not
-  further.
+- **Pushes, pull requests, issues and comments do not ask.** The host runs
+  them as soon as the model proposes them and the checks above pass.
 
 ## The browser
 
@@ -254,8 +249,9 @@ the work step's container and nowhere else.
   cookies, no saved passwords and no host credentials. Nothing is kept between
   steps.
 - **Page text is untrusted.** A web page can hold instructions aimed at the
-  model. The model is told to treat page text as data, and anything outward
-  still goes through actions, rules, the reviewer and your approval. A page can
+  model. The model is told to treat page text as data. Anything outward must
+  be an action that the model proposes, and the host runs it without asking
+  you. A page can
   still lead the model to open other pages, which sends data in the address.
 - **The tool list limits what the model is offered, not what the container
   can do.** The default `browser.tools` list leaves out `browser_evaluate`,
@@ -293,8 +289,9 @@ connector key.
   what a tool does; `read` is your statement about the tool. Mark a tool `read`
   only when you are sure it changes nothing.
 - **Write tools become actions.** A tool marked `write` is an action named
-  `mcp.<server>.<tool>`. Its floor is `ask`. The host calls it only after you
-  approve, with the exact arguments that were approved.
+  `mcp.<server>.<tool>`. The host calls it with the model's arguments as soon
+  as the model proposes it. It does not ask you first. Mark a tool `write`
+  only when you accept that the model can call it at any time.
 - **Every call is logged.** The database records each call's tool, arguments,
   status, result size and duration. `opendot connectors calls` shows them.
 - **Results are capped.** A result larger than `gateway.max_result_kib` is cut
@@ -311,7 +308,7 @@ connector key.
 - **The FactIQ preset** talks to `factiq.url`, which is
   `https://api.factiq.com/mcp` by default and must use https. Its
   `send_feedback` tool is off unless `factiq.feedback = true`, and then it is an
-  action that asks first. The plugin files are downloaded from a fixed commit
+  action that the host runs when the model proposes it. The plugin files are downloaded from a fixed commit
   of the public factiq-plugin repository and mounted read-only.
 
 ## Files OpenDot writes

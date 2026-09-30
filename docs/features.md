@@ -3,15 +3,15 @@
 OpenDot 0.2 has three features that are off until you turn them on. Each one
 is one block in `opendot.toml`. Run `opendot doctor` after each change; it
 checks the new block. The [README](../README.md) has short recipes, and
-[how-it-works.md](how-it-works.md) explains the rules and approvals that every
-action goes through.
+[how-it-works.md](how-it-works.md) explains how the host runs the actions that
+the model proposes.
 
 ## Pull requests
 
 **OpenDot can push a branch, open a pull request, open an issue and comment on
 an issue. The model only edits files; the host commits, checks and publishes,
-and every one of these is an action that goes through rules, review and your
-approval.** It is off until you add a repository:
+and each of these is an action that the host runs as soon as the model
+proposes it.** It is off until you add a repository:
 
 ```toml
 [github]
@@ -53,11 +53,10 @@ How it works:
    outside the example domains, text shaped like a token, a link to a coding
    session or a `github.private_markers` entry. If the repository is public and
    `public = false`, the host refuses every action for it.
-4. **Publishing happens only after approval.** Push and pull request actions
-   ask you every time; that is their floor. Issues and comments ask by default,
-   and a rule can lower them to `preapproved`, but no further. Before it
-   pushes, the host checks that the copy still holds the approved commit and
-   tree, and that the repository is still public or private as it was. It
+4. **The host publishes without asking you.** A push, a pull request, an
+   issue or a comment runs as soon as the model proposes it and the checks
+   above pass. Before it pushes, the host checks that the copy still holds the
+   prepared commit and tree, and that the repository is still public or private as it was. It
    never force-pushes and never pushes to the default branch.
 5. **Retries do not publish twice.** Each pull request, issue and comment
    carries a hidden marker made from its content. A retry finds the earlier
@@ -78,14 +77,14 @@ Limits:
 - Files that `prepare` writes into the copy are committed unless the
   repository's `.gitignore` covers them.
 - The text check matches patterns. It is a guard against mistakes, not a
-  guarantee. Review the diff before you approve.
-- The approval shows the whole diff, as text, for every changed file. Git's
+  guarantee. Read the diff in `opendot show N` after the push.
+- The task log shows the whole diff, as text, for every changed file. Git's
   diff drivers, text conversion and `.gitattributes` settings such as `-diff`
   cannot hide a line. A diff longer than `github.max_diff_chars` (20,000
   characters by default) is refused instead of cut.
 - A binary file has no lines for the text check to read. In a public
   repository a change that adds or edits a binary file is refused unless
-  `github.allow_binary_public = true`. In a private repository the approval
+  `github.allow_binary_public = true`. In a private repository the task log
   lists each binary file and its size.
 - An ssh remote uses the host user's ssh agent for fetch and push. An https
   remote uses the token.
@@ -107,7 +106,8 @@ forge = "none"
 visibility = "private"   # "private" or "public"; OpenDot cannot check this
 ```
 
-The push still asks you every time and shows the commit and the diff. With
+The push runs as soon as the model proposes it, and the task log shows the
+commit and the diff. With
 `visibility = "public"`, the public text check applies, and `public = false`
 refuses every action for the repository.
 
@@ -149,7 +149,8 @@ enabled = true
   and Chromium cannot build its sandbox without them. The container is the
   boundary.
 - Page text is untrusted. The model reads it as data. Anything outward still
-  goes through actions, rules, the reviewer and your approval.
+  must be an action that the model proposes, and the host runs it without
+  asking you.
 
 Check the browser with `opendot verify-image`, which opens a local page with
 no network, and with `opendot browser check --url https://example.com`, which
@@ -185,9 +186,8 @@ tools = [
   status, its size and its duration. `opendot connectors calls` shows them.
 - A tool marked `write` is not callable from the step. It becomes an action
   named `mcp.<server>.<tool>`. The model proposes it with the arguments, and
-  it goes through the rules, the reviewer and your approval like any other
-  outward action. Its floor is "ask". The host calls the tool only after the
-  approval, with the exact arguments that were approved.
+  the host calls the tool with those arguments at once, as it runs any other
+  action. It does not ask you first.
 - Large results are cut before they reach the model. A call that takes too
   long is stopped.
 - `opendot connectors list`, `login <name>`, `logout <name>` and `test <name>`
@@ -212,7 +212,7 @@ enabled = true
 # auth = "bearer_env"          # or "oauth", then: opendot connectors login factiq
 # api_key_env = "FACTIQ_API_KEY"
 # instructions = true
-# feedback = false             # true adds send_feedback as an action that asks first
+# feedback = false             # true adds send_feedback as an action
 ```
 
 - With `auth = "bearer_env"`, create an API key in your FactIQ settings and put

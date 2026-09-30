@@ -44,14 +44,14 @@ def make_config(tmp_path: Path, **sandbox: object) -> Config:
     return cfg
 
 
-def run_args(cfg: Config, *, step: Step = Step.WORK, **kwargs: object) -> list[str]:
+def run_args(cfg: Config, *, work_writable: bool = True, **kwargs: object) -> list[str]:
     session = new_session(cfg, "codex")
     return docker_run_args(
         cfg.sandbox,
         name="opendot-test",
         command=["codex", "app-server"],
         session=session,
-        work_writable=step is not Step.REVIEW,
+        work_writable=work_writable,
         **kwargs,
     )
 
@@ -98,11 +98,11 @@ def test_host_network_is_refused(tmp_path: Path) -> None:
             )
 
 
-def test_work_mount_is_read_only_for_review(tmp_path: Path) -> None:
+def test_work_mount_can_be_read_only(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
-    review = pairs(run_args(cfg, step=Step.REVIEW), "--mount")
-    work = pairs(run_args(cfg, step=Step.WORK), "--mount")
-    assert any("dst=/work" in m and m.endswith(",readonly") for m in review)
+    locked = pairs(run_args(cfg, work_writable=False), "--mount")
+    work = pairs(run_args(cfg), "--mount")
+    assert any("dst=/work" in m and m.endswith(",readonly") for m in locked)
     assert any("dst=/work" in m and not m.endswith(",readonly") for m in work)
 
 
@@ -165,8 +165,6 @@ def test_mount_checks(tmp_path: Path) -> None:
     good = [Mount(data, "/data")]
     assert check_mounts(Step.WORK, good, cfg) == good
     with pytest.raises(SandboxError):
-        check_mounts(Step.REVIEW, good, cfg)
-    with pytest.raises(SandboxError):
         check_mounts(Step.WORK, [Mount(tmp_path / "missing", "/data")], cfg)
     with pytest.raises(SandboxError):
         check_mounts(Step.WORK, [Mount(data, "/data"), Mount(data, "/data")], cfg)
@@ -201,8 +199,6 @@ def test_env_allowlist(tmp_path: Path) -> None:
     cfg = make_config(tmp_path, env_allowlist=["LANG_CHOICE"])
     assert allowlisted_env(cfg, {"LANG_CHOICE": "en", "OTHER": "x"}) == {"LANG_CHOICE": "en"}
     assert check_step_env(Step.WORK, {"LANG_CHOICE": "en"}, cfg) == {"LANG_CHOICE": "en"}
-    with pytest.raises(SandboxError):
-        check_step_env(Step.REVIEW, {"LANG_CHOICE": "en"}, cfg)
 
 
 @pytest.mark.parametrize(

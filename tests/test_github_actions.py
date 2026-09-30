@@ -194,7 +194,7 @@ class Env:
         self.config = Config.from_dict(
             {
                 "core": {"state_root": str(tmp_path / "state")},
-                "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+                "backend": {"worker": {"kind": "fake"}},
                 "github": {"author_email": "bot@example.com", **github},
                 "repositories": [repository],
             },
@@ -510,7 +510,7 @@ def test_binary_files_are_listed_with_sizes_and_left_out_of_the_diff(tmp_path: P
     assert any("logo.png (added, 107 bytes)" in note for note in payload["host_notes"])
 
 
-def test_gitattributes_cannot_hide_a_diff_from_the_approver(tmp_path: Path) -> None:
+def test_gitattributes_cannot_hide_a_diff(tmp_path: Path) -> None:
     env = Env(tmp_path, checks=[])
     _, copy = env.make_copy()
     (copy / ".gitattributes").write_text("*.py -diff\n")

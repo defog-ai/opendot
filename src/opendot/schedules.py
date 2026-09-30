@@ -10,10 +10,9 @@ A schedule holds:
     destination  where results go; fixed when the schedule is created
 
 Each run is a new task owned by the schedule's creator, in the creator's notes
-profile, with no approvals carried over from any earlier task. Results go only
-to the stored destination, which the person approved when the schedule was made.
-Saving a schedule is the action kind "schedule.create", which always needs a
-person's confirmation.
+profile. Results go only to the stored destination, which is the thread of the
+task that made the schedule. Saving a schedule is the action kind
+"schedule.create".
 
 Cadence and daylight saving: the cron expression is matched against wall-clock
 time in tz. A time that does not exist on the day clocks go forward (02:30 in
@@ -42,7 +41,6 @@ from opendot.actions import (
 )
 from opendot.models import (
     Destination,
-    Level,
     NotifyRule,
     Schedule,
     ScheduleStatus,
@@ -308,14 +306,11 @@ class ScheduleCreateHandler:
 
     The destination is always the proposing task's own thread; the proposal
     cannot name another one. The action counts as outward because every later
-    run posts to that destination, so only a single-use approval of the exact
-    fields can cover it.
+    run posts to that destination.
     """
 
     kind = KIND_SCHEDULE_CREATE
     outward = True
-    default_level = Level.ASK
-    floor = Level.ASK
 
     def prepare(self, proposal: Mapping[str, Any], ctx: ActionContext) -> PreparedAction:
         what = proposal.get("what")

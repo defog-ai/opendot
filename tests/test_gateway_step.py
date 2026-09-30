@@ -21,7 +21,7 @@ from test_gateway_server import LineClient, fake_factory
 def connector_config(state_root, **extra) -> Config:
     data = {
         "core": {"state_root": str(state_root)},
-        "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+        "backend": {"worker": {"kind": "fake"}},
         "mcp_servers": [
             {
                 "name": "fake",
@@ -104,7 +104,7 @@ def test_factiq_instructions_are_mounted(state_root, factiq_archive):
     config = Config.from_dict(
         {
             "core": {"state_root": str(state_root)},
-            "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+            "backend": {"worker": {"kind": "fake"}},
             "factiq": {"enabled": True},
         },
         env={},
@@ -149,7 +149,7 @@ def test_instructions_download_failure_skips_the_mount(state_root):
     config = Config.from_dict(
         {
             "core": {"state_root": str(state_root)},
-            "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+            "backend": {"worker": {"kind": "fake"}},
             "factiq": {"enabled": True},
         },
         env={},

@@ -12,7 +12,7 @@ from opendot.actions import (
     InvalidProposal,
     PreparedAction,
 )
-from opendot.models import Level, Task
+from opendot.models import Task
 
 __all__ = ["ACTION_HANDLERS", "MAX_REPLY_CHARS", "ReplyHandler", "reply_target"]
 
@@ -32,8 +32,6 @@ class ReplyHandler:
 
     kind = KIND_REPLY
     outward = True
-    default_level = Level.ALLOW
-    floor = Level.ALLOW
     description = (
         "Post a message in the requester's own thread. Fields: text (required, "
         "plain text or simple Markdown). Not available in scheduled runs."

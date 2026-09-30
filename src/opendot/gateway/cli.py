@@ -103,7 +103,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         print(f"  read tools: {', '.join(server.read_tools) or 'none'}")
         if server.write_tools:
             kinds = ", ".join(f"mcp.{server.name}.{t}" for t in server.write_tools)
-            print(f"  write tools (actions, always ask): {kinds}")
+            print(f"  write tools (run as actions): {kinds}")
         if server.instructions is not None:
             commit = installed_commit(server.instructions)
             state = f"at {commit[:12]}" if commit else "not fetched yet"

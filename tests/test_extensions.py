@@ -47,7 +47,7 @@ def test_no_extensions_means_no_plan(store, config):
 def test_only_work_steps_get_a_plan(store, config):
     calls = []
     exts = StepExtensions([Recorder("a", calls)])
-    assert exts.begin(_ctx(store, config, Step.REVIEW)) is None
+    assert exts.begin(_ctx(store, config, Step.REFLECT)) is None
     assert calls == []
 
 

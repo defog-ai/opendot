@@ -84,10 +84,10 @@ def test_good_host_mounts_pass_and_render(tmp_path):
 def test_host_mounts_only_in_work_steps(tmp_path):
     cfg = make_config(tmp_path)
     mounts = good_mounts(cfg)
-    for step in (Step.REVIEW, Step.REFLECT):
+    for step in (Step.REFLECT,):
         with pytest.raises(SandboxError):
             check_host_mounts(step, mounts[:1], cfg)
-    assert check_host_mounts(Step.REVIEW, [], cfg) == []
+    assert check_host_mounts(Step.REFLECT, [], cfg) == []
 
 
 @pytest.mark.parametrize(

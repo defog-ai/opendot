@@ -19,6 +19,7 @@ from opendot.backends.claude_code import (
     claude_args,
     container_token_variable,
 )
+from opendot.claude_login import save_token_file
 from opendot.config import Config, ConfigError
 from opendot.models import Step
 
@@ -33,8 +34,11 @@ def make_config(
         {
             "core": {"state_root": str(tmp_path / "state")},
             "backend": {
-                "reviewer": {"kind": "claude_code", "model": ""},
-                "claude_code": {"token_env": token_env},
+                "worker": {"kind": "claude_code", "model": ""},
+                "claude_code": {
+                    "token_env": token_env,
+                    "token_file": str(tmp_path / "claude-token"),
+                },
             },
             "sandbox": sandbox,
         },
@@ -49,7 +53,7 @@ def backend(
 ) -> ClaudeCodeBackend:
     env = {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN} if host_env is None else host_env
     return ClaudeCodeBackend(
-        cfg, "reviewer", docker, host_env=env, poll_seconds=0.01, exit_grace_seconds=0.1
+        cfg, "worker", docker, host_env=env, poll_seconds=0.01, exit_grace_seconds=0.1
     )
 
 
@@ -105,14 +109,14 @@ def answer_with_chosen_session(docker: FakeDocker) -> None:
     docker.spawn = spawn  # type: ignore[method-assign]
 
 
-def run_new(cfg: Config, docker: FakeDocker, step: Step = Step.REVIEW, **kwargs: Any) -> Any:
+def run_new(cfg: Config, docker: FakeDocker, step: Step = Step.REFLECT, **kwargs: Any) -> Any:
     answer_with_chosen_session(docker)
-    return backend(cfg, docker, **kwargs).run_step(step, "review this", SCHEMA, {}, [])
+    return backend(cfg, docker, **kwargs).run_step(step, "reflect on this", SCHEMA, {}, [])
 
 
-def test_command_line_for_a_new_review_step() -> None:
+def test_command_line_for_a_new_reflect_step() -> None:
     session_id = str(uuid.uuid4())
-    args = claude_args(Step.REVIEW, SCHEMA, session_id=session_id, resume=False)
+    args = claude_args(Step.REFLECT, SCHEMA, session_id=session_id, resume=False)
     assert args[:2] == ["claude", "-p"]
     assert after(args, "--output-format") == "stream-json"
     assert "--verbose" in args
@@ -153,7 +157,7 @@ def test_happy_path(tmp_path: Path) -> None:
     assert result.thread_id == session_id
     assert result.usage == {"turns": 3, "input_tokens": 3210, "output_tokens": 45}
 
-    assert process.stdin.written == "review this"
+    assert process.stdin.written == "reflect on this"
     assert process.stdin.closed_by_caller
     assert process.args[:3] == ["docker", "run", "--rm"]
     assert "CLAUDE_CONFIG_DIR=/opendot/cli" in process.args
@@ -164,7 +168,7 @@ def test_happy_path(tmp_path: Path) -> None:
     assert not any(TOKEN in a for a in process.args)
     assert not any("OPENAI" in a or "auth.json" in a for a in process.args)
     mounts = [a for a in process.args if "dst=/work" in a]
-    assert mounts and mounts[0].endswith(",readonly")
+    assert mounts and not mounts[0].endswith(",readonly")
     assert (cfg.state_root / "sessions" / "claude_code" / session_id).is_dir()
 
 
@@ -180,8 +184,36 @@ def test_api_key_login(tmp_path: Path) -> None:
 def test_missing_token_is_a_clear_error(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     docker = FakeDocker()
-    with pytest.raises(BackendError, match="CLAUDE_CODE_OAUTH_TOKEN is not set"):
-        backend(cfg, docker, host_env={}).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    with pytest.raises(BackendError, match="run `opendot login claude`"):
+        backend(cfg, docker, host_env={}).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
+    assert docker.spawned == []
+
+
+def test_saved_token_file_is_the_login_when_the_variable_is_not_set(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    save_token_file(cfg.claude_code.token_file, TOKEN)
+    docker = FakeDocker()
+    run_new(cfg, docker, host_env={})
+    process = docker.spawned[0]
+    assert process.env == {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+    assert TOKEN not in " ".join(process.args)
+
+
+def test_the_variable_wins_over_the_saved_file(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    save_token_file(cfg.claude_code.token_file, "sk-ant-oat01-" + "f" * 48)
+    docker = FakeDocker()
+    run_new(cfg, docker)
+    assert docker.spawned[0].env == {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+
+
+def test_a_token_file_others_can_read_is_refused(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    save_token_file(cfg.claude_code.token_file, TOKEN)
+    os.chmod(cfg.claude_code.token_file, 0o644)
+    docker = FakeDocker()
+    with pytest.raises(BackendError, match="chmod 600"):
+        backend(cfg, docker, host_env={}).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert docker.spawned == []
 
 
@@ -190,7 +222,7 @@ def test_resume(tmp_path: Path) -> None:
     docker = FakeDocker()
     first = run_new(cfg, docker)
     second = backend(cfg, docker).run_step(
-        Step.REVIEW, "again", SCHEMA, {}, [], resume_id=first.thread_id
+        Step.REFLECT, "again", SCHEMA, {}, [], resume_id=first.thread_id
     )
     process = docker.spawned[1]
     assert after(process.args, "--resume") == first.thread_id
@@ -219,7 +251,7 @@ def test_error_result(tmp_path: Path) -> None:
         stream("sid", result={"is_error": True, "subtype": "error_max_turns", "result": ""})
     )
     with pytest.raises(BackendError, match="error_max_turns"):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert list((cfg.state_root / "sessions" / "claude_code").iterdir()) == []
 
 
@@ -228,7 +260,7 @@ def test_result_text_is_used_without_structured_output(tmp_path: Path) -> None:
     docker = FakeDocker()
     lines = stream("sid", result={"structured_output": None, "result": '{"answer": "text"}'})
     docker.script_process(lines)
-    result = backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    result = backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert result.output == {"answer": "text"}
     # The CLI reported another id than the one chosen; the session folder follows it.
     assert result.thread_id == "sid"
@@ -240,7 +272,7 @@ def test_no_result_line_reports_redacted_stderr(tmp_path: Path) -> None:
     docker = FakeDocker()
     docker.script_process([], returncode=1, stderr=f"Invalid API key {TOKEN}\n")
     with pytest.raises(BackendError) as info:
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert "Invalid API key" in str(info.value)
     assert TOKEN not in str(info.value)
 
@@ -251,7 +283,7 @@ def test_transcript_is_redacted(tmp_path: Path) -> None:
     lines = stream("sid")
     lines.insert(1, json.dumps({"type": "user", "echo": f"token was {TOKEN}"}))
     docker.script_process(lines)
-    result = backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    result = backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     text = result.transcript_path.read_text()
     assert TOKEN not in text
     assert '"type": "result"' in text
@@ -264,7 +296,7 @@ def test_stop_kills_container(tmp_path: Path) -> None:
     calls = iter([False, True])
     with pytest.raises(StepInterrupted):
         backend(cfg, docker).run_step(
-            Step.REVIEW, "p", SCHEMA, {}, [], should_stop=lambda: next(calls, True)
+            Step.REFLECT, "p", SCHEMA, {}, [], should_stop=lambda: next(calls, True)
         )
     assert docker.spawned[0].killed
     assert docker.runs[0].args[:2] == ["docker", "kill"]
@@ -285,18 +317,12 @@ def test_timeout_kills_container(tmp_path: Path) -> None:
     try:
         with pytest.raises(StepTimedOut):
             backend(cfg, docker).run_step(
-                Step.REVIEW, "p", SCHEMA, {}, [], limits=StepLimits(timeout_seconds=0.2)
+                Step.REFLECT, "p", SCHEMA, {}, [], limits=StepLimits(timeout_seconds=0.2)
             )
         assert docker.spawned[0].killed
         assert docker.runs[0].args[:2] == ["docker", "kill"]
     finally:
         os.close(docker.open_fds[1])
-
-
-def test_review_step_refuses_env(tmp_path: Path) -> None:
-    cfg = make_config(tmp_path, env_allowlist=["TOOL_SETTING"])
-    with pytest.raises(BackendError):
-        backend(cfg, FakeDocker()).run_step(Step.REVIEW, "p", SCHEMA, {"TOOL_SETTING": "x"}, [])
 
 
 def test_token_variable_cannot_be_passed_as_step_env(tmp_path: Path) -> None:

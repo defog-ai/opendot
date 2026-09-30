@@ -8,8 +8,8 @@ Run from the repository root: uv run python docs/make_demo_svg.py docs/demo.svg
 import sys
 from html import escape
 
-W, H = 820, 540
-LOOP = 26.0  # seconds
+W, H = 820, 460
+LOOP = 22.0  # seconds
 FADE = 0.35
 
 BG = "#f7f7f5"
@@ -101,15 +101,6 @@ def scene_title(label, t_in, t_out):
     )
 
 
-def hint(y, number, t_in, t_out):
-    cls = timed(t_in, t_out, slide=False)
-    body.append(
-        f'<g class="{cls}">'
-        + text(84, y, f"reply  approve {number}  or  deny {number}", 13.5, MUTED, family="mono")
-        + "</g>"
-    )
-
-
 def divider(y, label, t_in, t_out):
     cls = timed(t_in, t_out, slide=False)
     body.append(
@@ -121,8 +112,8 @@ def divider(y, label, t_in, t_out):
 
 
 # ---- scene 1: fix a bug and open a pull request -----------------------------
-S1_END = 12.6
-scene_title("worker: Codex  ·  reviewer: Claude Code", 0.2, S1_END)
+S1_END = 10.6
+scene_title("worker: Codex", 0.2, S1_END)
 message(
     76,
     "you",
@@ -133,26 +124,23 @@ message(
 status(174, "cloning acme/web", 1.6, S1_END, 2.2, "done")
 status(200, "editing forms/signup.py, adding a test", 2.4, S1_END, 3.4, "done")
 status(226, "running the test suite", 3.6, S1_END, 4.6, "212 passed")
-status(252, "second model reviews the change", 4.8, S1_END, 5.8, "approved")
+status(252, "pushing the branch, opening the pull request", 4.8, S1_END, 5.8, "done")
 message(
     282,
     "bot",
     [
-        'The email check rejected "+". I fixed the pattern and',
-        "added a test. Open the pull request on acme/web?",
+        'The email check rejected "+". I fixed the pattern, added',
+        'a test and opened acme/web#481  "Accept + in signup emails".',
     ],
-    6.2,
+    6.4,
     S1_END,
     bot=True,
 )
-hint(364, 12, 6.2, S1_END)
-message(388, "you", ["approve 12"], 7.8, S1_END)
-message(450, "bot", ['Opened acme/web#481  "Accept + in signup emails"'], 9.0, S1_END, bot=True)
 
 # ---- scene 2: watch a web page on a schedule --------------------------------
-S2 = 13.2
+S2 = 11.2
 S2_END = LOOP - 0.5
-scene_title("worker: Claude Code  ·  reviewer: opencode", S2, S2_END)
+scene_title("worker: Claude Code", S2, S2_END)
 message(
     76,
     "you",
@@ -162,31 +150,29 @@ message(
 )
 status(174, "opening the page in Chrome", S2 + 1.4, S2_END, S2 + 2.2, "done")
 status(200, "reading the pricing table", S2 + 2.4, S2_END, S2 + 3.2, "done")
-status(226, "second model reviews the schedule", S2 + 3.4, S2_END, S2 + 4.2, "approved")
+status(226, "saving the schedule", S2 + 3.4, S2_END, S2 + 4.2, "saved")
 message(
     256,
     "bot",
-    ["New schedule: weekdays at 09:00, post only when", "the page changes. Save it?"],
+    ["Saved: weekdays at 09:00. I post only when the", "page changes."],
     S2 + 4.6,
     S2_END,
     bot=True,
 )
-hint(338, 13, S2 + 4.6, S2_END)
-message(362, "you", ["approve 13"], S2 + 6.0, S2_END)
-divider(432, "next morning", S2 + 7.6, S2_END)
+divider(350, "next morning", S2 + 6.0, S2_END)
 message(
-    454,
+    372,
     "bot",
     ["example.com/pricing changed: the Team plan went from $20 to $24."],
-    S2 + 8.4,
+    S2 + 6.8,
     S2_END,
     bot=True,
 )
 
-svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="OpenDot fixes a bug and opens a pull request after you approve it, then sets up a daily check of a web page.">
+svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="OpenDot fixes a bug and opens a pull request, then sets up a daily check of a web page.">
 <style>
 {chr(10).join(css)}
-@media (prefers-reduced-motion: reduce) {{ [class^="a"] {{ animation-play-state: paused; animation-delay: -11s; }} }}
+@media (prefers-reduced-motion: reduce) {{ [class^="a"] {{ animation-play-state: paused; animation-delay: -9s; }} }}
 </style>
 <rect width="{W}" height="{H}" rx="14" fill="{BG}"/>
 <rect x="12" y="12" width="{W - 24}" height="{H - 24}" rx="10" fill="{CARD}" stroke="{LINE}"/>

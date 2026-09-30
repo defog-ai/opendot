@@ -42,7 +42,6 @@ def make_config(tmp_path: Path, logins: dict[str, Any] | None = None, **sandbox:
             "core": {"state_root": str(tmp_path / "state")},
             "backend": {
                 "worker": {"kind": "opencode", "model": MODEL},
-                "reviewer": {"kind": "opencode", "model": MODEL},
                 "opencode": {"auth_file": str(auth)},
             },
             "sandbox": sandbox,
@@ -53,7 +52,7 @@ def make_config(tmp_path: Path, logins: dict[str, Any] | None = None, **sandbox:
     return cfg
 
 
-def backend(cfg: Config, docker: FakeDocker, role: str = "reviewer") -> OpencodeBackend:
+def backend(cfg: Config, docker: FakeDocker, role: str = "worker") -> OpencodeBackend:
     return OpencodeBackend(cfg, role, docker, poll_seconds=0.01, exit_grace_seconds=0.1)
 
 
@@ -130,7 +129,7 @@ def test_provider_of() -> None:
 
 def test_settings_allow_tools_only_for_work() -> None:
     assert opencode_settings(Step.WORK)["permission"] == {"*": "allow"}
-    assert opencode_settings(Step.REVIEW)["permission"] == {"*": "deny"}
+    assert opencode_settings(Step.REFLECT)["permission"] == {"*": "deny"}
     assert opencode_settings(Step.REFLECT)["permission"] == {"*": "deny"}
     settings = opencode_settings(Step.WORK)
     assert settings["share"] == "disabled"
@@ -176,7 +175,7 @@ def test_settings_give_mcp_servers_and_hide_unlisted_tools() -> None:
 
 def test_settings_refuse_mcp_outside_work_steps_and_overlapping_names() -> None:
     with pytest.raises(BackendError, match="no MCP servers"):
-        opencode_settings(Step.REVIEW, [BROWSER])
+        opencode_settings(Step.REFLECT, [BROWSER])
     overlap = McpServerSpec(name="browser_extra", command=("x",), env={}, tools=())
     with pytest.raises(BackendError, match="overlap"):
         opencode_settings(Step.WORK, [BROWSER, overlap])
@@ -238,14 +237,14 @@ def test_happy_path(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     docker = _WatchingDocker()
     docker.script_process(events())
-    result = backend(cfg, docker).run_step(Step.REVIEW, "review this", SCHEMA, {}, [])
+    result = backend(cfg, docker).run_step(Step.REFLECT, "reflect on this", SCHEMA, {}, [])
     process = docker.spawned[0]
 
     assert result.output == {"answer": "ok"}
     assert result.thread_id == SESSION
     assert result.usage == {"turns": 2, "input_tokens": 2200, "output_tokens": 50}
 
-    assert process.stdin.written.startswith("review this\n\n## Output format")
+    assert process.stdin.written.startswith("reflect on this\n\n## Output format")
     assert process.stdin.closed_by_caller
     assert command_of(process) == opencode_args(MODEL)
     settings = json.loads(env_value(process.args, "OPENCODE_CONFIG_CONTENT"))
@@ -257,7 +256,7 @@ def test_happy_path(tmp_path: Path) -> None:
     assert process.env == {}
     assert not any(API_KEY in a or OTHER_KEY in a for a in process.args)
     mounts = [a for a in process.args if "dst=/work" in a]
-    assert mounts and mounts[0].endswith(",readonly")
+    assert mounts and not mounts[0].endswith(",readonly")
     # The session folder is named after opencode's id and holds no login afterwards.
     session = cfg.state_root / "sessions" / "opencode" / SESSION
     assert session.is_dir()
@@ -269,9 +268,9 @@ def test_resume_passes_the_session(tmp_path: Path) -> None:
     docker = _WatchingDocker()
     docker.script_process(events())
     docker.script_process(events())
-    first = backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    first = backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     second = backend(cfg, docker).run_step(
-        Step.REVIEW, "again", SCHEMA, {}, [], resume_id=first.thread_id
+        Step.REFLECT, "again", SCHEMA, {}, [], resume_id=first.thread_id
     )
     assert after(docker.spawned[1].args, "--session") == SESSION
     assert cli_folder(docker.spawned[1].args).parent.name == SESSION
@@ -298,7 +297,7 @@ def test_only_the_final_step_text_is_the_answer(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     docker = _WatchingDocker()
     docker.script_process(events(answer='{"answer": "final"}', before='{"answer": "draft"} '))
-    result = backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    result = backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert result.output == {"answer": "final"}
 
 
@@ -312,7 +311,7 @@ def test_error_event_fails_and_is_redacted(tmp_path: Path) -> None:
     }
     docker.script_process([json.dumps(error)], returncode=1)
     with pytest.raises(BackendError) as info:
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert "bad key" in str(info.value)
     assert API_KEY not in str(info.value)
     assert list((cfg.state_root / "sessions" / "opencode").iterdir()) == []
@@ -323,7 +322,7 @@ def test_answer_without_json_fails(tmp_path: Path) -> None:
     docker = _WatchingDocker()
     docker.script_process(events(answer="no object here"))
     with pytest.raises(BackendError, match="JSON object"):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
 
 
 def test_no_output_reports_stderr(tmp_path: Path) -> None:
@@ -331,7 +330,7 @@ def test_no_output_reports_stderr(tmp_path: Path) -> None:
     docker = _WatchingDocker()
     docker.script_process([], returncode=1, stderr="model not found\n")
     with pytest.raises(BackendError, match="model not found"):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
 
 
 def test_transcript_is_redacted(tmp_path: Path) -> None:
@@ -340,7 +339,7 @@ def test_transcript_is_redacted(tmp_path: Path) -> None:
     lines = events()
     lines.insert(1, json.dumps({"type": "text", "part": {"text": f"key is {API_KEY}"}}))
     docker.script_process(lines)
-    result = backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    result = backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     text = result.transcript_path.read_text()
     assert API_KEY not in text
     assert "step_finish" in text
@@ -351,7 +350,7 @@ def test_missing_login_file(tmp_path: Path) -> None:
     cfg.opencode.auth_file.unlink()
     docker = FakeDocker()
     with pytest.raises(BackendError, match="opencode auth login"):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert docker.spawned == []
 
 
@@ -359,7 +358,7 @@ def test_missing_provider_login(tmp_path: Path) -> None:
     cfg = make_config(tmp_path, logins={"otherprovider": {"type": "api", "key": OTHER_KEY}})
     docker = FakeDocker()
     with pytest.raises(BackendError, match="no login for 'someprovider'"):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert docker.spawned == []
 
 
@@ -378,7 +377,7 @@ def test_refreshed_oauth_login_is_written_back(tmp_path: Path) -> None:
     new_access = "n" * 40
     docker = _WatchingDocker(rewrite={"someprovider": oauth(new_access)})
     docker.script_process(events())
-    backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     host = json.loads(cfg.opencode.auth_file.read_text())
     assert host["someprovider"]["access"] == new_access
     assert host["otherprovider"] == {"type": "api", "key": OTHER_KEY}
@@ -390,7 +389,7 @@ def test_changed_api_key_is_not_written_back(tmp_path: Path) -> None:
     before = cfg.opencode.auth_file.read_text()
     docker = _WatchingDocker(rewrite={"someprovider": {"type": "api", "key": "x" * 40}})
     docker.script_process(events())
-    backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert cfg.opencode.auth_file.read_text() == before
 
 
@@ -400,7 +399,7 @@ def test_oauth_entry_with_new_keys_is_not_written_back(tmp_path: Path) -> None:
     changed = {**oauth("n" * 40), "extra": "planted-value"}
     docker = _WatchingDocker(rewrite={"someprovider": changed})
     docker.script_process(events())
-    backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     assert cfg.opencode.auth_file.read_text() == before
 
 
@@ -417,7 +416,7 @@ def test_host_login_changed_during_the_step_is_kept(tmp_path: Path) -> None:
         return process
 
     docker.spawn = spawn  # type: ignore[method-assign]
-    backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [])
     host = json.loads(cfg.opencode.auth_file.read_text())
     assert host["someprovider"]["access"] == "h" * 40
 
@@ -426,7 +425,7 @@ def test_stop_before_start_leaves_nothing(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     docker = FakeDocker()
     with pytest.raises(StepInterrupted):
-        backend(cfg, docker).run_step(Step.REVIEW, "p", SCHEMA, {}, [], should_stop=lambda: True)
+        backend(cfg, docker).run_step(Step.REFLECT, "p", SCHEMA, {}, [], should_stop=lambda: True)
     assert docker.spawned == []
     assert list((cfg.state_root / "sessions" / "opencode").iterdir()) == []
 
@@ -438,7 +437,7 @@ def test_stop_kills_the_container_and_removes_the_login(tmp_path: Path) -> None:
     calls = iter([False, True])
     with pytest.raises(StepInterrupted):
         backend(cfg, docker).run_step(
-            Step.REVIEW, "p", SCHEMA, {}, [], should_stop=lambda: next(calls, True)
+            Step.REFLECT, "p", SCHEMA, {}, [], should_stop=lambda: next(calls, True)
         )
     assert docker.spawned[0].killed
     assert docker.runs[0].args[:2] == ["docker", "kill"]
@@ -482,8 +481,6 @@ def test_init_writes_opencode_models(tmp_path: Path, monkeypatch: pytest.MonkeyP
                 "opencode",
                 "--worker-model",
                 MODEL,
-                "--reviewer",
-                "claude_code",
             ]
         )
         == 0
@@ -491,4 +488,3 @@ def test_init_writes_opencode_models(tmp_path: Path, monkeypatch: pytest.MonkeyP
     config = Config.load(path)
     assert config.worker_backend.kind == "opencode"
     assert config.worker_backend.model == MODEL
-    assert config.reviewer_backend.kind == "claude_code"

@@ -12,7 +12,7 @@ from opendot.actions import (
     InvalidProposal,
     PreparedAction,
 )
-from opendot.models import Level, Schedule
+from opendot.models import Schedule
 from opendot.schedules import result_hash, should_notify
 
 __all__ = ["ACTION_HANDLERS", "MAX_NOTIFY_CHARS", "NotifyHandler", "notify_target"]
@@ -34,8 +34,6 @@ class NotifyHandler:
 
     kind = KIND_NOTIFY
     outward = True
-    default_level = Level.ALLOW
-    floor = Level.ALLOW
     description = (
         "Post the result of a scheduled run at the schedule's saved destination. "
         "Fields: text (required). Only available in scheduled runs."

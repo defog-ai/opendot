@@ -1,5 +1,5 @@
-"""SQLite state store: tasks and leases, attempts, intake, outbox, approvals, rules,
-schedules, notes, the review log and the audit log. Also the single-worker lock file."""
+"""SQLite state store: tasks and leases, attempts, intake, outbox, actions,
+schedules, notes and the audit log. Also the single-worker lock file."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import os
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from importlib import resources
 from pathlib import Path
@@ -19,9 +18,6 @@ from opendot.models import (
     TERMINAL_STATES,
     ActionRecord,
     ActionStatus,
-    Approval,
-    ApprovalMode,
-    ApprovalStatus,
     Attempt,
     AttemptStatus,
     Clock,
@@ -32,7 +28,6 @@ from opendot.models import (
     GatewayCallStatus,
     GatewayMode,
     IncomingMessage,
-    Level,
     Message,
     MessageKind,
     Note,
@@ -44,11 +39,6 @@ from opendot.models import (
     PublicationState,
     RepositoryRecord,
     RepoVisibility,
-    ReviewRecord,
-    ReviewVerdict,
-    Rule,
-    RuleSource,
-    RuleStatus,
     Schedule,
     ScheduleStatus,
     Step,
@@ -65,7 +55,17 @@ from opendot.models import (
 if TYPE_CHECKING:
     from opendot.config import Config
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+# The actions table keeps its level column, which versions before 0.3 filled
+# from the permission rules. Every action now runs at this one level.
+ALLOW_LEVEL = "allow"
+
+# Written on actions that were waiting for an approval when the database moved
+# to version 3. The next work step reads it.
+NO_APPROVALS_ERROR = (
+    "not run: OpenDot no longer asks for approvals; propose the action again if it is still needed"
+)
 DB_FILENAME = "opendot.db"
 
 
@@ -83,13 +83,6 @@ class LeaseLost(StoreError):
 
 class LockBusy(StoreError):
     """Another worker process holds the lock file."""
-
-
-@dataclass(frozen=True)
-class DenialCounts:
-    in_a_row: int  # denials since the most recent non-deny verdict
-    in_window: int  # denials among the most recent `window` verdicts
-    window: int
 
 
 # ---------------------------------------------------------------------------
@@ -246,44 +239,11 @@ def _action(row: sqlite3.Row) -> ActionRecord:
         target=row["target"],
         payload=_loads(row["payload"]),
         payload_digest=row["payload_digest"],
-        level=Level(row["level"]),
         status=ActionStatus(row["status"]),
         result=_loads(row["result"]),
         error=row["error"],
         created_at=from_iso(row["created_at"]),
         updated_at=from_iso(row["updated_at"]),
-    )
-
-
-def _approval(row: sqlite3.Row) -> Approval:
-    return Approval(
-        id=row["id"],
-        task_id=row["task_id"],
-        action_id=row["action_id"],
-        kind=row["kind"],
-        target=row["target"],
-        payload_digest=row["payload_digest"],
-        mode=ApprovalMode(row["mode"]),
-        status=ApprovalStatus(row["status"]),
-        requested_at=from_iso(row["requested_at"]),
-        decided_by=row["decided_by"],
-        decided_at=_dt(row["decided_at"]),
-        expires_at=_dt(row["expires_at"]),
-        used_at=_dt(row["used_at"]),
-    )
-
-
-def _rule(row: sqlite3.Row) -> Rule:
-    return Rule(
-        id=row["id"],
-        kind=row["kind"],
-        target=row["target"],
-        level=Level(row["level"]),
-        status=RuleStatus(row["status"]),
-        source=RuleSource(row["source"]),
-        created_by=row["created_by"],
-        created_at=from_iso(row["created_at"]),
-        approved_at=_dt(row["approved_at"]),
     )
 
 
@@ -320,17 +280,6 @@ def _note(row: sqlite3.Row) -> Note:
         source_task_id=row["source_task_id"],
         created_at=from_iso(row["created_at"]),
         updated_at=from_iso(row["updated_at"]),
-    )
-
-
-def _review(row: sqlite3.Row) -> ReviewRecord:
-    return ReviewRecord(
-        id=row["id"],
-        task_id=row["task_id"],
-        action_id=row["action_id"],
-        verdict=ReviewVerdict(row["verdict"]),
-        reason=row["reason"],
-        created_at=from_iso(row["created_at"]),
     )
 
 
@@ -484,9 +433,12 @@ class Store:
         """Create every table that does not exist yet. Safe to run repeatedly.
 
         Version 1 to 2 only adds tables (schema.sql uses IF NOT EXISTS), so a
-        version 1 database keeps every row. The database file and its WAL and
-        shared-memory files are set to mode 0600, because connector_tokens can
-        hold OAuth tokens.
+        version 1 database keeps every row. Version 3 removes approvals: actions
+        that waited for one are marked denied with NO_APPROVALS_ERROR, and their
+        tasks are queued again. The approvals, rules and reviews tables of an
+        older database stay as they are, as a record; nothing reads them. The
+        database file and its WAL and shared-memory files are set to mode 0600,
+        because connector_tokens can hold OAuth tokens.
         """
         current = self.schema_version()
         if current is not None and current > SCHEMA_VERSION:
@@ -498,11 +450,26 @@ class Store:
         self._conn.executescript(schema)
         self._tighten_files()
         with self.transaction():
+            if current is not None and current < 3:
+                self._end_approvals()
             self._conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    def _end_approvals(self) -> None:
+        now = self._now()
+        self._conn.execute(
+            "UPDATE actions SET status = 'denied', error = ?, updated_at = ? "
+            "WHERE status = 'awaiting_approval'",
+            (NO_APPROVALS_ERROR, now),
+        )
+        self._conn.execute(
+            "UPDATE tasks SET state = 'queued', updated_at = ?, lease_owner = NULL, "
+            "lease_expires_at = NULL WHERE state = 'awaiting_approval'",
+            (now,),
+        )
 
     def _tighten_files(self) -> None:
         for suffix in ("", "-wal", "-shm"):
@@ -730,10 +697,9 @@ class Store:
     ) -> Task:
         """Move a task to `state` without a lease check (operator commands use this).
 
-        Leaving running clears the lease. A terminal state sets finished_at and
-        expires every pending or granted approval of the task. error / summary are
-        written only when given; wait_until is written for state waiting and cleared
-        otherwise.
+        Leaving running clears the lease. A terminal state sets finished_at.
+        error / summary are written only when given; wait_until is written for
+        state waiting and cleared otherwise.
         """
         state = TaskState(state)
         if state is TaskState.WAITING and wait_until is None:
@@ -758,11 +724,6 @@ class Store:
             if state in TERMINAL_STATES:
                 sets.append("finished_at = ?")
                 params.append(now)
-                conn.execute(
-                    "UPDATE approvals SET status = 'expired' "
-                    "WHERE task_id = ? AND status IN ('pending', 'granted')",
-                    (task_id,),
-                )
             conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", (*params, task_id))
             return self.get_task(task_id)
 
@@ -1059,7 +1020,6 @@ class Store:
         target: str,
         payload: dict[str, Any],
         payload_digest: str,
-        level: Level,
         attempt_id: int | None = None,
         status: ActionStatus = ActionStatus.PROPOSED,
     ) -> ActionRecord:
@@ -1075,7 +1035,7 @@ class Store:
                     target,
                     _dumps(payload),
                     payload_digest,
-                    Level(level).value,
+                    ALLOW_LEVEL,
                     ActionStatus(status).value,
                     now,
                     now,
@@ -1093,19 +1053,17 @@ class Store:
         action_id: int,
         status: ActionStatus,
         *,
-        level: Level | None = None,
         result: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> ActionRecord:
         with self.transaction() as conn:
             self.get_action(action_id)
             conn.execute(
-                "UPDATE actions SET status = ?, level = COALESCE(?, level), "
+                "UPDATE actions SET status = ?, "
                 "result = COALESCE(?, result), error = COALESCE(?, error), updated_at = ? "
                 "WHERE id = ?",
                 (
                     ActionStatus(status).value,
-                    None if level is None else Level(level).value,
                     None if result is None else _dumps(result),
                     error,
                     self._now(),
@@ -1122,187 +1080,6 @@ class Store:
             params.append(ActionStatus(status).value)
         rows = self._conn.execute(sql + " ORDER BY id", params).fetchall()
         return [_action(r) for r in rows]
-
-    # -- approvals ---------------------------------------------------------
-
-    def create_approval(
-        self,
-        task_id: int,
-        *,
-        kind: str,
-        target: str,
-        mode: ApprovalMode,
-        payload_digest: str | None,
-        action_id: int | None = None,
-        expires_at: datetime | None = None,
-    ) -> Approval:
-        """Add a pending approval request. single_use requires payload_digest."""
-        mode = ApprovalMode(mode)
-        if mode is ApprovalMode.SINGLE_USE and not payload_digest:
-            raise ValueError("a single-use approval needs the payload digest")
-        with self.transaction() as conn:
-            self.get_task(task_id)
-            cur = conn.execute(
-                "INSERT INTO approvals (task_id, action_id, kind, target, payload_digest, mode, "
-                "status, requested_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-                (
-                    task_id,
-                    action_id,
-                    kind,
-                    target,
-                    payload_digest,
-                    mode.value,
-                    self._now(),
-                    _ts(expires_at),
-                ),
-            )
-            return self.get_approval(cur.lastrowid)
-
-    def get_approval(self, approval_id: int) -> Approval:
-        return _approval(
-            self._one(
-                "SELECT * FROM approvals WHERE id = ?", (approval_id,), f"approval {approval_id}"
-            )
-        )
-
-    def decide_approval(self, approval_id: int, *, granted: bool, decided_by: str) -> Approval:
-        """Grant or deny a pending approval. Raises StoreError if it is not pending.
-
-        This does not check who decided; approvals.py must check that decided_by
-        is the task's requester (or the local operator) before calling it.
-        """
-        self.expire_approvals()
-        with self.transaction() as conn:
-            approval = self.get_approval(approval_id)
-            if approval.status is not ApprovalStatus.PENDING:
-                raise StoreError(f"approval {approval_id} is {approval.status.value}, not pending")
-            conn.execute(
-                "UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?",
-                ("granted" if granted else "denied", decided_by, self._now(), approval_id),
-            )
-            return self.get_approval(approval_id)
-
-    def list_approvals(
-        self, task_id: int | None = None, status: ApprovalStatus | None = None
-    ) -> list[Approval]:
-        sql = "SELECT * FROM approvals WHERE 1 = 1"
-        params: list[Any] = []
-        if task_id is not None:
-            sql += " AND task_id = ?"
-            params.append(task_id)
-        if status is not None:
-            sql += " AND status = ?"
-            params.append(ApprovalStatus(status).value)
-        rows = self._conn.execute(sql + " ORDER BY id", params).fetchall()
-        return [_approval(r) for r in rows]
-
-    def granted_approvals(self, task_id: int, kind: str, target: str) -> list[Approval]:
-        """Granted, unexpired approvals for exactly this task, kind and target.
-
-        The caller (approvals.py) still has to compare payload_digest and mode.
-        """
-        self.expire_approvals()
-        rows = self._conn.execute(
-            "SELECT * FROM approvals WHERE task_id = ? AND kind = ? AND target = ? "
-            "AND status = 'granted' ORDER BY id",
-            (task_id, kind, target),
-        ).fetchall()
-        return [_approval(r) for r in rows]
-
-    def mark_approval_used(self, approval_id: int) -> Approval:
-        """Mark a granted single-use approval used. Until-task-end approvals stay granted."""
-        with self.transaction() as conn:
-            approval = self.get_approval(approval_id)
-            if approval.status is not ApprovalStatus.GRANTED:
-                raise StoreError(f"approval {approval_id} is {approval.status.value}, not granted")
-            if approval.mode is ApprovalMode.SINGLE_USE:
-                conn.execute(
-                    "UPDATE approvals SET status = 'used', used_at = ? WHERE id = ?",
-                    (self._now(), approval_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE approvals SET used_at = ? WHERE id = ?", (self._now(), approval_id)
-                )
-            return self.get_approval(approval_id)
-
-    def expire_approvals(self) -> int:
-        """Expire pending or granted approvals whose expires_at has passed."""
-        with self.transaction() as conn:
-            cur = conn.execute(
-                "UPDATE approvals SET status = 'expired' WHERE status IN ('pending', 'granted') "
-                "AND expires_at IS NOT NULL AND expires_at <= ?",
-                (self._now(),),
-            )
-            return cur.rowcount
-
-    # -- rules -------------------------------------------------------------
-
-    def add_rule(
-        self,
-        kind: str,
-        level: Level,
-        *,
-        target: str = "*",
-        source: RuleSource,
-        created_by: str,
-    ) -> Rule:
-        """Add a rule. Agent-drafted rules start pending; the others start active."""
-        source = RuleSource(source)
-        status = RuleStatus.PENDING if source is RuleSource.AGENT else RuleStatus.ACTIVE
-        now = self._now()
-        with self.transaction() as conn:
-            cur = conn.execute(
-                "INSERT INTO rules (kind, target, level, status, source, created_by, created_at, "
-                "approved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    kind,
-                    target,
-                    Level(level).value,
-                    status.value,
-                    source.value,
-                    created_by,
-                    now,
-                    None if status is RuleStatus.PENDING else now,
-                ),
-            )
-            return self.get_rule(cur.lastrowid)
-
-    def get_rule(self, rule_id: int) -> Rule:
-        return _rule(self._one("SELECT * FROM rules WHERE id = ?", (rule_id,), f"rule {rule_id}"))
-
-    def approve_rule(self, rule_id: int) -> Rule:
-        """Activate a pending rule. Only the local operator command may call this."""
-        with self.transaction() as conn:
-            self.get_rule(rule_id)
-            conn.execute(
-                "UPDATE rules SET status = 'active', approved_at = ? WHERE id = ?",
-                (self._now(), rule_id),
-            )
-            return self.get_rule(rule_id)
-
-    def remove_rule(self, rule_id: int) -> bool:
-        with self.transaction() as conn:
-            return bool(conn.execute("DELETE FROM rules WHERE id = ?", (rule_id,)).rowcount)
-
-    def list_rules(self, status: RuleStatus | None = None) -> list[Rule]:
-        if status is None:
-            rows = self._conn.execute("SELECT * FROM rules ORDER BY id").fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM rules WHERE status = ? ORDER BY id", (RuleStatus(status).value,)
-            ).fetchall()
-        return [_rule(r) for r in rows]
-
-    def sync_config_rules(self, rules: Iterable[tuple[str, str, Level]]) -> list[Rule]:
-        """Replace every source=config rule with (kind, target, level) triples from the config."""
-        with self.transaction() as conn:
-            conn.execute("DELETE FROM rules WHERE source = 'config'")
-            for kind, target, level in rules:
-                self.add_rule(
-                    kind, level, target=target, source=RuleSource.CONFIG, created_by="config"
-                )
-        return [r for r in self.list_rules() if r.source is RuleSource.CONFIG]
 
     # -- schedules ---------------------------------------------------------
 
@@ -1446,43 +1223,6 @@ class Store:
                 "SELECT * FROM notes WHERE profile = ? ORDER BY id", (profile,)
             ).fetchall()
         return [_note(r) for r in rows]
-
-    # -- review log --------------------------------------------------------
-
-    def record_review(
-        self,
-        task_id: int,
-        verdict: ReviewVerdict,
-        *,
-        reason: str = "",
-        action_id: int | None = None,
-    ) -> ReviewRecord:
-        with self.transaction() as conn:
-            cur = conn.execute(
-                "INSERT INTO reviews (task_id, action_id, verdict, reason, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (task_id, action_id, ReviewVerdict(verdict).value, reason, self._now()),
-            )
-            row = conn.execute("SELECT * FROM reviews WHERE id = ?", (cur.lastrowid,)).fetchone()
-            return _review(row)
-
-    def list_reviews(self, task_id: int, limit: int = 50) -> list[ReviewRecord]:
-        """Newest first."""
-        rows = self._conn.execute(
-            "SELECT * FROM reviews WHERE task_id = ? ORDER BY id DESC LIMIT ?", (task_id, limit)
-        ).fetchall()
-        return [_review(r) for r in rows]
-
-    def denial_counts(self, task_id: int, window: int = 50) -> DenialCounts:
-        """Count denials in a row and within the last `window` verdicts for a task."""
-        recent = self.list_reviews(task_id, limit=window)
-        in_a_row = 0
-        for review in recent:
-            if review.verdict is not ReviewVerdict.DENY:
-                break
-            in_a_row += 1
-        in_window = sum(1 for r in recent if r.verdict is ReviewVerdict.DENY)
-        return DenialCounts(in_a_row=in_a_row, in_window=in_window, window=window)
 
     # -- audit log ---------------------------------------------------------
 

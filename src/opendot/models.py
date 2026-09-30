@@ -1,4 +1,4 @@
-"""Shared data types: states, steps, rule levels and the records the store returns."""
+"""Shared data types: states, steps and the records the store returns."""
 
 from __future__ import annotations
 
@@ -47,7 +47,6 @@ def from_iso(value: str) -> datetime:
 class TaskState(StrEnum):
     QUEUED = "queued"  # ready for a worker to claim
     RUNNING = "running"  # claimed; a step or an action is in progress
-    AWAITING_APPROVAL = "awaiting_approval"  # parked until the requester approves or denies
     AWAITING_REPLY = "awaiting_reply"  # the agent asked the requester a question
     WAITING = "waiting"  # parked until wait_until; tick requeues it
     DONE = "done"
@@ -66,10 +65,10 @@ TERMINAL_STATES = frozenset(
 
 
 class Step(StrEnum):
-    """The three model steps. Each maps to prompts/<NAME>.md and schemas/<name>.schema.json."""
+    """The model steps. Each maps to prompts/<NAME>.md and schemas/<name>.schema.json."""
 
     WORK = "work"
-    REVIEW = "review"
+    REVIEW = "review"  # no longer run; kept so attempts recorded before 0.3 still read
     REFLECT = "reflect"
 
 
@@ -94,71 +93,18 @@ class MessageKind(StrEnum):
     STEER = "steer"  # a note that changes the running task
     STOP = "stop"  # ends the current step and the task
     FOLLOW_UP = "follow_up"  # new work in the thread of a finished task
-    COMMAND = "command"  # queue / pause / resume / help / approve / deny
+    COMMAND = "command"  # queue / pause / resume / help
     IGNORED = "ignored"
-
-
-class Level(StrEnum):
-    """Rule levels, from least to most strict. "Refuse" is not a level (see UnknownAction)."""
-
-    ALLOW = "allow"  # run after the reviewer approves
-    PREAPPROVED = "preapproved"  # run only with a matching stored approval
-    ASK = "ask"  # ask the requester and park the task
-    HAND_OFF = "hand_off"  # never run; give the prepared material to the requester
-
-    @property
-    def rank(self) -> int:
-        return _LEVEL_ORDER.index(self)
-
-    @staticmethod
-    def strictest(*levels: Level) -> Level:
-        if not levels:
-            raise ValueError("strictest() needs at least one level")
-        return max(levels, key=lambda level: level.rank)
-
-
-_LEVEL_ORDER = [Level.ALLOW, Level.PREAPPROVED, Level.ASK, Level.HAND_OFF]
-
-
-class ApprovalMode(StrEnum):
-    SINGLE_USE = "single_use"  # covers one action with this exact payload digest
-    UNTIL_TASK_END = "until_task_end"  # covers kind + target for the rest of the task
-
-
-class ApprovalStatus(StrEnum):
-    PENDING = "pending"
-    GRANTED = "granted"
-    DENIED = "denied"
-    USED = "used"
-    EXPIRED = "expired"
 
 
 class ActionStatus(StrEnum):
     PROPOSED = "proposed"
     REFUSED = "refused"  # unknown kind or bad proposal; the host has no code to run it
-    DENIED = "denied"  # the reviewer or the requester said no
-    AWAITING_APPROVAL = "awaiting_approval"
-    APPROVED = "approved"
+    DENIED = "denied"  # only on actions recorded before 0.3, which had approvals
+    APPROVED = "approved"  # only on actions recorded before 0.3
     EXECUTED = "executed"
     FAILED = "failed"
-    HANDED_OFF = "handed_off"
-
-
-class ReviewVerdict(StrEnum):
-    APPROVE = "approve"
-    DENY = "deny"
-    ESCALATE_TO_USER = "escalate_to_user"
-
-
-class RuleStatus(StrEnum):
-    ACTIVE = "active"
-    PENDING = "pending"  # drafted, waiting for the operator
-
-
-class RuleSource(StrEnum):
-    OPERATOR = "operator"  # added on the local command line
-    CONFIG = "config"  # listed in the TOML file
-    AGENT = "agent"  # drafted by the agent; always starts pending
+    HANDED_OFF = "handed_off"  # only on actions recorded before 0.3
 
 
 class NotifyRule(StrEnum):
@@ -279,7 +225,7 @@ class StepPlan:
     """Everything the v0.2 features add to one work step.
 
     Built by the step extensions (opendot.extensions) before the step runs and
-    passed to Backend.run_step(plan=...). Review and reflect steps get no plan.
+    passed to Backend.run_step(plan=...). Reflect steps get no plan.
 
     step_token: a host-made id for this step; the run folder and the gateway log
         are keyed on it because the attempt row does not exist yet.
@@ -396,42 +342,11 @@ class ActionRecord:
     target: str
     payload: dict[str, Any]
     payload_digest: str
-    level: Level
     status: ActionStatus
     result: dict[str, Any] | None
     error: str | None
     created_at: datetime
     updated_at: datetime
-
-
-@dataclass
-class Approval:
-    id: int
-    task_id: int
-    action_id: int | None
-    kind: str
-    target: str
-    payload_digest: str | None  # required for single_use; None only for until_task_end
-    mode: ApprovalMode
-    status: ApprovalStatus
-    requested_at: datetime
-    decided_by: str | None
-    decided_at: datetime | None
-    expires_at: datetime | None
-    used_at: datetime | None
-
-
-@dataclass
-class Rule:
-    id: int
-    kind: str  # an action kind, or a prefix ending in ".*", or "*"
-    target: str  # exact target, or "*"
-    level: Level
-    status: RuleStatus
-    source: RuleSource
-    created_by: str
-    created_at: datetime
-    approved_at: datetime | None
 
 
 @dataclass
@@ -470,16 +385,6 @@ class Note:
     source_task_id: int | None
     created_at: datetime
     updated_at: datetime
-
-
-@dataclass
-class ReviewRecord:
-    id: int
-    task_id: int
-    action_id: int | None
-    verdict: ReviewVerdict
-    reason: str
-    created_at: datetime
 
 
 @dataclass

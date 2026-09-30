@@ -1,7 +1,7 @@
 """The `opendot` command line.
 
 Commands that only read or change stored records (status, queue, show, notes,
-schedules, rules, retry, skip) open the store and nothing else. Commands that
+schedules, retry, skip) open the store and nothing else. Commands that
 run model steps (run-once, tick) build the configured backends and take the
 worker lock, so only one worker runs at a time. The local user of every command
 here is the operator: channel "cli", actor config.cli.user.
@@ -10,21 +10,23 @@ here is the operator: channel "cli", actor config.cli.user.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from opendot import __version__, cron, help
 from opendot.actions import KIND_NOTIFY, KIND_REPLY, build_registry
-from opendot.approvals import NotAllowedToDecide
 from opendot.backends import BackendError, CommandRunner, SubprocessRunner
 from opendot.channels import ChannelError, enabled_channels
+from opendot.claude_login import TokenFileError, read_token_file, save_token_file
 from opendot.config import CONFIG_ENV, DEFAULT_CONFIG_PATH, Config, ConfigError
 from opendot.container_contract import (
     build_image_args,
@@ -36,12 +38,9 @@ from opendot.extensions import doctor_checks as feature_doctor_checks
 from opendot.extensions import register_feature_cli
 from opendot.models import (
     ActionStatus,
-    ApprovalStatus,
     Destination,
-    Level,
     NoteSource,
     NotifyRule,
-    RuleStatus,
     ScheduleStatus,
     Step,
     StepResult,
@@ -49,12 +48,6 @@ from opendot.models import (
     TaskState,
 )
 from opendot.orchestrator import Orchestrator
-from opendot.rules import (
-    NotOperator,
-    add_operator_rule,
-    approve_operator_rule,
-    remove_operator_rule,
-)
 from opendot.sandbox import SNAP_DOCKER_ADVICE, detect_snap_docker, snap_docker_problems
 from opendot.schedules import (
     ScheduleError,
@@ -68,14 +61,13 @@ from opendot.store import LockBusy, NotFound, Store, StoreError, WorkerLock, ope
 UNFINISHED = [
     TaskState.QUEUED,
     TaskState.RUNNING,
-    TaskState.AWAITING_APPROVAL,
     TaskState.AWAITING_REPLY,
     TaskState.WAITING,
 ]
 DEMO_SCRIPT_NAME = "demo-script.json"
 DEMO_REPLY = (
     "Hello. This answer comes from the scripted fake backend, so no model ran. "
-    "Switch backend.worker.kind and backend.reviewer.kind to codex, claude_code or opencode "
+    "Switch backend.worker.kind to codex, claude_code or opencode "
     "for real answers."
 )
 
@@ -126,10 +118,7 @@ def _orchestrator(config: Config, store: Store, *, run_steps: bool) -> Orchestra
         store,
         config,
         worker=_NoSteps(),
-        reviewer=_NoSteps(),
         channels={c.name: c for c in enabled_channels(config)},
-        # The full registry: an approval given here runs the approved action in
-        # this process, and that may be a GitHub or connector action.
         registry=build_registry(config),
     )
 
@@ -179,17 +168,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     path = _config_path(args)
     if path.exists() and not args.force:
         raise CliError(f"{path} already exists; pass --force to replace it")
-    worker, reviewer = args.worker, args.reviewer
-    models = {"worker": args.worker_model, "reviewer": args.reviewer_model}
+    worker, model = args.worker, args.worker_model
     if args.demo:
-        worker = reviewer = "fake"
-        models = {"worker": "", "reviewer": ""}
-    for role, kind in (("worker", worker), ("reviewer", reviewer)):
-        if kind == "opencode" and "/" not in models[role].strip("/"):
-            raise CliError(
-                f"the opencode backend needs --{role}-model provider/model; "
-                "run `opencode models` to list them"
-            )
+        worker, model = "fake", ""
+    if worker == "opencode" and "/" not in model.strip("/"):
+        raise CliError(
+            "the opencode backend needs --worker-model provider/model; "
+            "run `opencode models` to list them"
+        )
     state_root = Path(args.state_root).expanduser().resolve() if args.state_root else None
 
     lines = [
@@ -201,11 +187,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     lines += [
         "[backend.worker]",
         f"kind = {_toml_string(worker)}",
-        f"model = {_toml_string(models['worker'])}",
-        "",
-        "[backend.reviewer]",
-        f"kind = {_toml_string(reviewer)}",
-        f"model = {_toml_string(models['reviewer'])}",
+        f"model = {_toml_string(model)}",
         "",
     ]
     if args.demo:
@@ -237,19 +219,6 @@ def cmd_init(args: argparse.Namespace) -> int:
                         "actions": [],
                     },
                     "usage": {"turns": 1},
-                }
-            ],
-            "review": [
-                {
-                    "output": {
-                        "verdicts": [
-                            {
-                                "action_id": 1,
-                                "verdict": "approve",
-                                "reason": "A reply in the requester's own thread.",
-                            }
-                        ]
-                    }
                 }
             ],
         }
@@ -297,15 +266,15 @@ def doctor_findings(
         else:
             found.append(("ok", f"state folder {root} (mode 700)"))
 
-    kinds = {config.worker_backend.kind, config.reviewer_backend.kind}
-    if config.worker_backend.kind == config.reviewer_backend.kind and "fake" not in kinds:
+    for key in config.ignored_keys:
         found.append(
             (
                 "warn",
-                "the worker and the reviewer use the same backend; a different vendor "
-                "for the reviewer gives a more independent check",
+                f"the config file has [{key}], which OpenDot no longer uses; "
+                "you can delete that part of the file",
             )
         )
+    kinds = {config.worker_backend.kind}
     if "anthropic_api" in kinds:
         found.append(("error", "the anthropic_api backend is not ready yet"))
     if "codex" in kinds:
@@ -315,26 +284,10 @@ def doctor_findings(
         else:
             found.append(("error", f"Codex login file {auth} is missing; run `codex login`"))
     if "claude_code" in kinds:
-        name = config.claude_code.token_env
-        if env.get(name):
-            found.append(("ok", f"Claude Code token variable {name} is set"))
-        else:
-            found.append(
-                (
-                    "error",
-                    f"{name} is not set; create a token with `claude setup-token` "
-                    "or use an API key",
-                )
-            )
+        found.append(_claude_login_finding(config, env))
     if "opencode" in kinds:
         auth = config.opencode.auth_file
-        providers = sorted(
-            {
-                choice.model.partition("/")[0]
-                for choice in (config.worker_backend, config.reviewer_backend)
-                if choice.kind == "opencode"
-            }
-        )
+        providers = [config.worker_backend.model.partition("/")[0]]
         try:
             logins = json.loads(auth.read_bytes())
         except (OSError, ValueError):
@@ -428,6 +381,58 @@ def _snap_findings(config: Config, runner: CommandRunner) -> list[tuple[str, str
     return [("error", f"snap Docker: {problem}") for problem in problems]
 
 
+def _claude_login_finding(config: Config, env: Mapping[str, str]) -> tuple[str, str]:
+    name = config.claude_code.token_env
+    token_file = config.claude_code.token_file
+    try:
+        saved = read_token_file(token_file)
+    except (TokenFileError, OSError) as exc:
+        return ("error", f"cannot read the saved Claude login: {exc}")
+    if env.get(name):
+        return ("ok", f"Claude Code token variable {name} is set")
+    if saved:
+        return ("ok", f"Claude Code login saved in {token_file}")
+    return ("error", "no Claude Code login; run `opendot login claude`")
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Save a Claude Code token in backend.claude_code.token_file.
+
+    With a terminal, run `claude setup-token` so you can sign in, then ask for the
+    token it printed. Without a terminal, read the token from standard input.
+    """
+    config = _load(args)
+    token_file = config.claude_code.token_file
+    if sys.stdin.isatty():
+        if not args.skip_setup:
+            print("Running `claude setup-token`. Sign in, then copy the token it prints.")
+            try:
+                code = subprocess.run(["claude", "setup-token"], check=False).returncode
+            except FileNotFoundError:
+                raise CliError(
+                    "the `claude` command is not installed on this machine; install Claude "
+                    "Code, or make a token on another machine and run "
+                    "`opendot login claude --skip-setup`"
+                ) from None
+            if code != 0:
+                raise CliError(f"`claude setup-token` ended with exit code {code}")
+        token = getpass.getpass("Paste the token (it is not shown): ")
+    else:
+        token = sys.stdin.read()
+    try:
+        save_token_file(token_file, token)
+    except TokenFileError as exc:
+        raise CliError(str(exc)) from None
+    print(f"Saved the Claude login in {token_file} (only you can read it).")
+    print("Every opendot command uses it, including the runs that cron starts.")
+    if os.environ.get(config.claude_code.token_env):
+        print(
+            f"{config.claude_code.token_env} is also set in this shell; when it is set, "
+            "it is used instead of the saved file."
+        )
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     config = _load(args)
     findings = doctor_findings(config, _runner())
@@ -519,7 +524,6 @@ def cmd_run_once(args: argparse.Namespace) -> int:
 
     def work() -> int:
         orchestrator = _orchestrator(config, store, run_steps=True)
-        store.expire_approvals()
         store.wake_due()
         task = orchestrator.run_once()
         orchestrator.flush_outbox()
@@ -575,9 +579,6 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"    answer: {answer}")
         if task.last_error and task.state in (TaskState.FAILED, TaskState.STOPPED):
             print(f"    error: {_short(task.last_error, 200)}")
-    pending = store.list_approvals(status=ApprovalStatus.PENDING)
-    if pending:
-        print(f"{len(pending)} approval(s) waiting; see `opendot queue`.")
     return 0
 
 
@@ -592,18 +593,6 @@ def cmd_queue(args: argparse.Namespace) -> int:
         if task.state is TaskState.WAITING:
             line += f" (until {_when(task.wait_until)})"
         print(line)
-    pending = store.list_approvals(status=ApprovalStatus.PENDING)
-    for approval in pending:
-        text = ""
-        if approval.action_id is not None:
-            action = store.get_action(approval.action_id)
-            text = _short(json.dumps(action.payload, ensure_ascii=False), 90)
-        print(
-            f"approval {approval.id} for task {approval.task_id}: {approval.kind} "
-            f"-> {approval.target} {text}"
-        )
-    if pending:
-        print("Decide with `opendot approve N` or `opendot deny N`.")
     return 0
 
 
@@ -641,21 +630,10 @@ def cmd_show(args: argparse.Namespace) -> int:
     if actions:
         print("Actions:")
         for action in actions:
-            print(
-                f"  {action.id}. {action.kind} -> {action.target or '-'} "
-                f"[level {action.level.value}, {action.status.value}]"
-            )
+            print(f"  {action.id}. {action.kind} -> {action.target or '-'} [{action.status.value}]")
             print(f"     {_short(json.dumps(action.payload, ensure_ascii=False), 200)}")
             if action.error:
                 print(f"     error: {_short(action.error, 200)}")
-    approvals = store.list_approvals(task.id)
-    if approvals:
-        print("Approvals:")
-        for approval in approvals:
-            print(
-                f"  {approval.id}. {approval.kind} {approval.mode.value}: {approval.status.value}"
-                + (f" by {approval.decided_by}" if approval.decided_by else "")
-            )
     events = list(reversed(store.list_events(task.id, limit=args.events)))
     if events:
         print("Recent events:")
@@ -666,32 +644,8 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Operator decisions
+# Changing a task
 # ---------------------------------------------------------------------------
-
-
-def _decide(args: argparse.Namespace, granted: bool) -> int:
-    config = _load(args)
-    store = _store(config)
-    orchestrator = _orchestrator(config, store, run_steps=False)
-    try:
-        approval = orchestrator.decide(
-            args.approval_id, granted=granted, decided_by=config.cli.user, channel="cli"
-        )
-    except NotAllowedToDecide as exc:
-        raise CliError(str(exc)) from None
-    word = "granted" if granted else "denied"
-    task = store.get_task(approval.task_id)
-    print(f"Approval {approval.id} {word}. Task {task.id} is {task.state.value}.")
-    return 0
-
-
-def cmd_approve(args: argparse.Namespace) -> int:
-    return _decide(args, True)
-
-
-def cmd_deny(args: argparse.Namespace) -> int:
-    return _decide(args, False)
 
 
 def cmd_retry(args: argparse.Namespace) -> int:
@@ -732,7 +686,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Notes, schedules and rules
+# Notes and schedules
 # ---------------------------------------------------------------------------
 
 
@@ -827,40 +781,6 @@ def cmd_schedules(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_rules(args: argparse.Namespace) -> int:
-    config = _load(args)
-    store = _store(config)
-    sub = args.rules_command
-    who = {"channel": "cli", "actor": config.cli.user}
-    try:
-        if sub == "list":
-            rules = store.list_rules()
-            if not rules:
-                print("No rules. Built-in defaults and fixed floors apply.")
-            for rule in rules:
-                print(
-                    f"{rule.id}. {rule.kind} target={rule.target} level={rule.level.value} "
-                    f"({rule.status.value}, from {rule.source.value})"
-                )
-            if any(r.status is RuleStatus.PENDING for r in rules):
-                print("Activate a pending rule with `opendot rules approve N`.")
-        elif sub == "add":
-            rule = add_operator_rule(
-                store, config, args.kind, Level(args.level), target=args.target, **who
-            )
-            print(f"Rule {rule.id} added: {rule.kind} -> {rule.level.value}.")
-        elif sub == "approve":
-            rule = approve_operator_rule(store, config, args.rule_id, **who)
-            print(f"Rule {rule.id} is active.")
-        elif sub == "rm":
-            if not remove_operator_rule(store, config, args.rule_id, **who):
-                raise CliError(f"rule {args.rule_id} not found")
-            print(f"Rule {args.rule_id} removed.")
-    except NotOperator as exc:
-        raise CliError(str(exc)) from None
-    return 0
-
-
 def cmd_install_cron(args: argparse.Namespace) -> int:
     runner = _runner()
     current = cron.read_crontab(runner)
@@ -883,6 +803,11 @@ def cmd_install_cron(args: argparse.Namespace) -> int:
     cron.write_crontab(runner, cron.with_block(current, line))
     print("Installed:")
     print(line)
+    if config.worker_backend.kind == "claude_code" and _claude_login_finding(config, {})[0] != "ok":
+        print(
+            "Note: cron does not read your shell profile, so it cannot see "
+            f"{config.claude_code.token_env}. Run `opendot login claude` to save the login."
+        )
     return 0
 
 
@@ -913,12 +838,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("init", cmd_init)
     p.add_argument("--state-root", help="folder for the database, runs and logs")
     p.add_argument("--worker", choices=backend_kinds, default="codex")
-    p.add_argument("--reviewer", choices=backend_kinds, default="claude_code")
     p.add_argument(
         "--worker-model", default="", help="model for the worker; opencode needs provider/model"
-    )
-    p.add_argument(
-        "--reviewer-model", default="", help="model for the reviewer; opencode needs provider/model"
     )
     p.add_argument(
         "--demo",
@@ -928,6 +849,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="replace an existing config file")
 
     add("migrate", cmd_migrate)
+    p = add("login", cmd_login)
+    p.add_argument("service", choices=["claude"], help="the login to save")
+    p.add_argument(
+        "--skip-setup",
+        action="store_true",
+        help="do not run `claude setup-token`; only ask for a token you already have",
+    )
     add("doctor", cmd_doctor)
     add("build-image", cmd_build_image)
     add("verify-image", cmd_verify_image)
@@ -954,8 +882,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("task_id", type=int)
     p.add_argument("--events", type=int, default=20, help="how many recent events to list")
 
-    for name, handler in (("approve", cmd_approve), ("deny", cmd_deny)):
-        add(name, handler).add_argument("approval_id", type=int)
     for name, handler in (("retry", cmd_retry), ("skip", cmd_skip), ("stop", cmd_stop)):
         add(name, handler).add_argument("task_id", type=int)
 
@@ -985,18 +911,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--notify", choices=[r.value for r in NotifyRule], default="always")
     for name in ("pause", "resume", "rm"):
         schedules.add_parser(name, help=f"{name} a schedule").add_argument("schedule_id", type=int)
-
-    p = add("rules", cmd_rules)
-    rules = p.add_subparsers(dest="rules_command", required=True)
-    rules.add_parser("list", help="list rules")
-    r = rules.add_parser("add", help="add an active rule")
-    r.add_argument("kind", help='an action kind, a prefix such as "note.*", or "*"')
-    r.add_argument("level", choices=[level.value for level in Level])
-    r.add_argument("--target", default="*", help='exact target, or "*" (default)')
-    r = rules.add_parser("approve", help="activate a pending rule")
-    r.add_argument("rule_id", type=int)
-    r = rules.add_parser("rm", help="delete a rule")
-    r.add_argument("rule_id", type=int)
 
     p = add("install-cron", cmd_install_cron)
     p.add_argument("--every", type=int, default=1, help="minutes between runs (default 1)")

@@ -12,7 +12,7 @@ from opendot.config import (
 
 V01_CONFIG = {
     "core": {"state_root": "/tmp/opendot-test", "timezone": "UTC"},
-    "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+    "backend": {"worker": {"kind": "fake"}},
     "sandbox": {"network": "none", "env_allowlist": ["LANG"]},
     "rules": [{"kind": "note.write", "level": "ask"}],
 }
@@ -26,6 +26,7 @@ def test_v01_config_still_loads_with_safe_defaults():
     assert cfg.browser.enabled is False
     assert cfg.factiq.enabled is False
     assert cfg.connectors() == []
+    assert cfg.ignored_keys == ["rules"]
 
 
 def test_no_new_privileges_can_be_turned_off():
