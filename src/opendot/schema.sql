@@ -223,3 +223,92 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_task_idx ON events (task_id, id);
+
+-- ---------------------------------------------------------------------------
+-- Schema version 2. New tables only: CREATE TABLE IF NOT EXISTS cannot add
+-- columns to a table a version 1 database already has, so v0.2 adds none.
+-- ---------------------------------------------------------------------------
+
+-- Host state for each configured repository and its control clone.
+CREATE TABLE IF NOT EXISTS repositories (
+    name TEXT PRIMARY KEY,
+    remote TEXT NOT NULL,
+    control_path TEXT NOT NULL,
+    default_branch TEXT NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (visibility IN ('unknown', 'public', 'private')),
+    visibility_checked_at TEXT,
+    last_fetched_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+-- A task's own copy of a repository. The work step gets it writable, with .git
+-- read-only; only the host commits and pushes from it.
+CREATE TABLE IF NOT EXISTS worktrees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    repository TEXT NOT NULL,
+    path TEXT NOT NULL,
+    base_ref TEXT NOT NULL,
+    base_sha TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'removed')),
+    created_at TEXT NOT NULL,
+    removed_at TEXT,
+    UNIQUE (task_id, repository)
+);
+
+-- Branches, pull requests, issues and comments the host published. The marker
+-- is hidden text in the body; a retry searches for it before creating anything.
+CREATE TABLE IF NOT EXISTS github_publications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    action_id INTEGER REFERENCES actions(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('branch', 'pull_request', 'issue', 'issue_comment')),
+    repository TEXT NOT NULL,
+    marker TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK (state IN ('started', 'published', 'merged', 'closed', 'failed')),
+    branch TEXT,
+    head_sha TEXT,
+    number INTEGER,
+    url TEXT,
+    external_id TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS github_publications_task_idx ON github_publications (task_id);
+CREATE INDEX IF NOT EXISTS github_publications_open_idx
+    ON github_publications (kind, state);
+
+-- Every call a work step made through the MCP gateway, including refused ones.
+CREATE TABLE IF NOT EXISTS gateway_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    step_token TEXT NOT NULL,
+    attempt_id INTEGER REFERENCES attempts(id) ON DELETE SET NULL,
+    server TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('read', 'write')),
+    arguments TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL CHECK (status IN ('ok', 'error', 'refused')),
+    result_bytes INTEGER NOT NULL DEFAULT 0,
+    result_preview TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS gateway_calls_task_idx ON gateway_calls (task_id, id);
+CREATE INDEX IF NOT EXISTS gateway_calls_step_idx ON gateway_calls (step_token);
+
+-- OAuth tokens for MCP servers. Only the host reads them; the database file is 0600.
+CREATE TABLE IF NOT EXISTS connector_tokens (
+    server TEXT PRIMARY KEY,
+    token_type TEXT NOT NULL DEFAULT 'Bearer',
+    access_token TEXT NOT NULL,
+    refresh_token TEXT,
+    expires_at TEXT,
+    scope TEXT NOT NULL DEFAULT '',
+    client_info TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+);

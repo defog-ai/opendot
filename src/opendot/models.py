@@ -224,6 +224,81 @@ class StepResult:
 
 
 # ---------------------------------------------------------------------------
+# Step plan (v0.2): what the host adds to one work step container
+# ---------------------------------------------------------------------------
+
+
+class HostMountKind(StrEnum):
+    """Folders the host creates and mounts. Each kind has one fixed place in the container."""
+
+    WORKTREE = "worktree"  # a task's copy of a repository: /opendot/repos/<name>, writable
+    ARTIFACTS = "artifacts"  # files the step leaves for the host: /opendot/run/artifacts, writable
+    MCP = "mcp"  # gateway socket and bridge script: /opendot/mcp, read-only
+    INSTRUCTIONS = "instructions"  # connector instructions: /opendot/instructions/<name>, read-only
+
+
+@dataclass(frozen=True)
+class HostMount:
+    """A mount of a folder the host made under the state root.
+
+    Operator mounts (Mount) may never come from the state root. Host mounts may,
+    but only from the folders sandbox.check_host_mounts allows, and only onto the
+    container paths it allows. A WORKTREE mount always gets its .git folder
+    mounted read-only on top; the sandbox adds that mount itself.
+    """
+
+    kind: HostMountKind
+    host: Path
+    container: str
+    writable: bool = False
+
+
+@dataclass(frozen=True)
+class McpServerSpec:
+    """An MCP server the model's CLI starts inside the container, over stdio.
+
+    Two uses in v0.2: the browser (command = the Playwright MCP server) and the
+    host gateway (command = the bridge script that forwards to the gateway socket).
+    Remote servers are never given to the CLI directly; the gateway reaches them.
+
+    tools: the tool names the CLI may call. An empty tuple means every tool the
+    server lists; the gateway lists only allowlisted read tools, so it may use ().
+    env: fixed, non-secret values only. Secret values never enter a container.
+    """
+
+    name: str
+    command: tuple[str, ...]
+    env: dict[str, str] = field(default_factory=dict)
+    tools: tuple[str, ...] = ()
+    startup_timeout_seconds: int = 30
+    tool_timeout_seconds: int = 120
+
+
+@dataclass
+class StepPlan:
+    """Everything the v0.2 features add to one work step.
+
+    Built by the step extensions (opendot.extensions) before the step runs and
+    passed to Backend.run_step(plan=...). Review and reflect steps get no plan.
+
+    step_token: a host-made id for this step; the run folder and the gateway log
+        are keyed on it because the attempt row does not exist yet.
+    run_dir: runs_dir/task-<task id>/<step_token>; the host owns it.
+    prompt_notes: plain text paragraphs the host adds to the work prompt, for
+        example where the repositories are mounted.
+    shm_size: a --shm-size value for the container ("" = Docker's default).
+    """
+
+    step_token: str
+    run_dir: Path
+    host_mounts: list[HostMount] = field(default_factory=list)
+    mcp_servers: list[McpServerSpec] = field(default_factory=list)
+    fixed_env: dict[str, str] = field(default_factory=dict)
+    prompt_notes: list[str] = field(default_factory=list)
+    shm_size: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Rows returned by the store
 # ---------------------------------------------------------------------------
 
@@ -414,3 +489,129 @@ class EventRecord:
     kind: str
     detail: dict[str, Any]
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# v0.2 rows: repositories, task worktrees, GitHub publications, gateway log,
+# connector tokens
+# ---------------------------------------------------------------------------
+
+
+class RepoVisibility(StrEnum):
+    UNKNOWN = "unknown"
+    PUBLIC = "public"
+    PRIVATE = "private"
+
+
+class WorktreeStatus(StrEnum):
+    ACTIVE = "active"
+    REMOVED = "removed"
+
+
+class PublicationKind(StrEnum):
+    BRANCH = "branch"  # github.push_branch
+    PULL_REQUEST = "pull_request"  # github.open_pr
+    ISSUE = "issue"  # github.issue
+    ISSUE_COMMENT = "issue_comment"  # github.issue_comment
+
+
+class PublicationState(StrEnum):
+    STARTED = "started"  # the host began; a retry must look for the marker first
+    PUBLISHED = "published"  # pushed, or created on GitHub
+    MERGED = "merged"  # pull requests only, set by reconcile
+    CLOSED = "closed"  # pull requests and issues, set by reconcile
+    FAILED = "failed"
+
+
+class GatewayMode(StrEnum):
+    READ = "read"  # exposed to the model through the gateway
+    WRITE = "write"  # never exposed; becomes the action kind mcp.<server>.<tool>
+
+
+class GatewayCallStatus(StrEnum):
+    OK = "ok"
+    ERROR = "error"  # the remote server returned an error or could not be reached
+    REFUSED = "refused"  # not on the allowlist, or not a read tool
+
+
+@dataclass
+class RepositoryRecord:
+    """Host state for one configured repository and its control clone."""
+
+    name: str
+    remote: str
+    control_path: Path
+    default_branch: str
+    visibility: RepoVisibility
+    visibility_checked_at: datetime | None
+    last_fetched_at: datetime | None
+    updated_at: datetime
+
+
+@dataclass
+class Worktree:
+    """A task's own copy of a repository (a local clone made from the control clone)."""
+
+    id: int
+    task_id: int
+    repository: str
+    path: Path
+    base_ref: str
+    base_sha: str
+    branch: str  # the branch the host will push, e.g. opendot/task-12-fix-typo
+    status: WorktreeStatus
+    created_at: datetime
+    removed_at: datetime | None
+
+
+@dataclass
+class Publication:
+    """Something the host published on GitHub. marker makes retries idempotent."""
+
+    id: int
+    task_id: int
+    action_id: int | None
+    kind: PublicationKind
+    repository: str  # "owner/name"
+    marker: str  # hidden text put in the body; also used to find an earlier copy
+    state: PublicationState
+    branch: str | None
+    head_sha: str | None
+    number: int | None  # PR or issue number
+    url: str | None
+    external_id: str | None  # GitHub node or comment id
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class GatewayCall:
+    id: int
+    task_id: int
+    step_token: str
+    attempt_id: int | None
+    server: str
+    tool: str
+    mode: GatewayMode
+    arguments: dict[str, Any]
+    status: GatewayCallStatus
+    result_bytes: int
+    result_preview: str  # the first few KiB of the result text, for the audit log
+    error: str | None
+    duration_ms: int
+    created_at: datetime
+
+
+@dataclass
+class ConnectorToken:
+    """An OAuth token for one MCP server, held by the host only."""
+
+    server: str
+    token_type: str
+    access_token: str
+    refresh_token: str | None
+    expires_at: datetime | None
+    scope: str
+    client_info: dict[str, Any]
+    updated_at: datetime

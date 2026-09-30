@@ -63,6 +63,7 @@ from opendot.backends import (
     StepTimedOut,
 )
 from opendot.channels import Channel, ChannelError
+from opendot.extensions import ExtensionError, StepContext, StepExtensions, with_prompt_notes
 from opendot.models import (
     ActionRecord,
     ActionStatus,
@@ -78,6 +79,7 @@ from opendot.models import (
     Mount,
     RuleStatus,
     Step,
+    StepPlan,
     Task,
     TaskSource,
     TaskState,
@@ -163,8 +165,10 @@ class Orchestrator:
 
     worker, reviewer: the backends for the work (and reflect) step and the review step.
     channels: channel objects by kind ("cli", "slack").
-    registry: the host's action handlers; opendot.actions.default_registry() in
-        production.
+    registry: the host's action handlers; opendot.actions.build_registry(config)
+        in production.
+    extensions: the step extensions that prepare each work step (repository
+        copies, the browser, the connector gateway); none by default.
     """
 
     def __init__(
@@ -179,6 +183,7 @@ class Orchestrator:
         owner: str | None = None,
         host_env: Mapping[str, str] | None = None,
         poll_seconds: float = 30.0,
+        extensions: StepExtensions | None = None,
     ):
         self.store = store
         self.config = config
@@ -189,6 +194,7 @@ class Orchestrator:
         self.owner = owner or _default_owner()
         self.host_env = os.environ if host_env is None else host_env
         self.poll_seconds = poll_seconds
+        self.extensions = extensions or StepExtensions([])
         self._ingesting = False
         for channel in self.channels.values():
             if hasattr(channel, "store") and channel.store is None:
@@ -196,8 +202,10 @@ class Orchestrator:
 
     @classmethod
     def from_config(cls, config: Config, store: Store) -> Orchestrator:
-        """The production set-up: configured backends, enabled channels, built-in actions."""
-        from opendot.actions import default_registry
+        """The production set-up: configured backends, enabled channels, the
+        built-in actions plus those of the configured features, and the step
+        extensions of the configured features."""
+        from opendot.actions import build_registry
         from opendot.backends import create_backend
         from opendot.channels import enabled_channels
         from opendot.rules import sync_config_rules
@@ -209,7 +217,8 @@ class Orchestrator:
             worker=create_backend(config, "worker"),
             reviewer=create_backend(config, "reviewer"),
             channels={c.name: c for c in enabled_channels(config)},
-            registry=default_registry(),
+            registry=build_registry(config),
+            extensions=StepExtensions.from_config(config),
         )
 
     # -- helpers ---------------------------------------------------------------
@@ -755,6 +764,7 @@ class Orchestrator:
         env: Mapping[str, str],
         mounts: list[Mount],
         resume_id: str | None,
+        plan: StepPlan | None = None,
     ) -> tuple[Attempt, dict[str, Any] | None]:
         """Run one step and validate it. Returns the attempt and the output when valid."""
         schema = instructions.load_schema(step)
@@ -775,6 +785,7 @@ class Orchestrator:
                 resume_id,
                 limits=self._step_limits(task),
                 should_stop=self._should_stop(task.id),
+                plan=plan,
             )
             usage = result.usage or {}
             thread_id = result.thread_id
@@ -841,15 +852,34 @@ class Orchestrator:
             messages=shown,
             action_results=self._action_results(task),
         )
-        attempt, output = self._run_model(
-            task,
-            Step.WORK,
-            self.worker,
-            prompt,
-            env=self._env(),
-            mounts=self._mounts(),
-            resume_id=resume_id,
+        step_ctx = StepContext(
+            task=task,
+            step=Step.WORK,
+            store=self.store,
+            config=self.config,
+            backend_kind=self.worker.kind,
         )
+        try:
+            plan = self.extensions.begin(step_ctx)
+        except ExtensionError as exc:
+            self.store.log_event("step.prepare_failed", {"error": str(exc)}, task_id=task.id)
+            self.store.update_task(task.id, last_error=str(exc))
+            self._fail(task, f"the host could not prepare the work step: {exc}")
+            return None
+        attempt: Attempt | None = None
+        try:
+            attempt, output = self._run_model(
+                task,
+                Step.WORK,
+                self.worker,
+                with_prompt_notes(prompt, plan),
+                env=self._env(),
+                mounts=self._mounts(),
+                resume_id=resume_id,
+                plan=plan,
+            )
+        finally:
+            self.extensions.finish(step_ctx, plan, attempt)
         if output is None:
             self._step_failed(task, attempt)
             return None

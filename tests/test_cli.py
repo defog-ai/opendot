@@ -68,7 +68,7 @@ def test_every_command_has_a_summary_and_a_parser():
     parser = cli.build_parser()
     sub = next(a for a in parser._actions if a.dest == "command")
     assert set(sub.choices) == set(help.COMMANDS)
-    assert len(help.COMMANDS) == 21
+    assert len(help.COMMANDS) == 24
 
 
 def test_help_lists_the_demo(capsys):

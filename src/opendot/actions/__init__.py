@@ -11,6 +11,11 @@ field plus fields for that kind. The host looks the kind up in this registry:
 
 Built-in handlers live in the modules listed in BUILTIN_ACTION_MODULES. Each of
 those modules exposes a module-level list ACTION_HANDLERS.
+
+Handlers that depend on the config (v0.2: GitHub, MCP connector write tools) live
+in the modules listed in FEATURE_ACTION_MODULES. Each of those exposes a function
+action_handlers(config) that returns the handlers to register. build_registry
+adds them to the built-in ones.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
@@ -31,6 +37,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILTIN_ACTION_MODULES",
+    "FEATURE_ACTION_MODULES",
+    "GITHUB_KINDS",
+    "KIND_GITHUB_ISSUE",
+    "KIND_GITHUB_ISSUE_COMMENT",
+    "KIND_GITHUB_OPEN_PR",
+    "KIND_GITHUB_PUSH_BRANCH",
     "KIND_NOTE_WRITE",
     "KIND_NOTIFY",
     "KIND_REPLY",
@@ -43,7 +55,10 @@ __all__ = [
     "InvalidProposal",
     "PreparedAction",
     "UnknownAction",
+    "build_registry",
     "default_registry",
+    "mcp_kind",
+    "parse_mcp_kind",
     "payload_digest",
 ]
 
@@ -52,11 +67,33 @@ KIND_NOTIFY = "notify.post"  # post a schedule result to the schedule's stored d
 KIND_NOTE_WRITE = "note.write"  # add, edit or delete a note in the requester's profile
 KIND_SCHEDULE_CREATE = "schedule.create"  # save a new schedule
 
+# v0.2 GitHub kinds. Push and pull request always ask (fixed floor); issues and
+# comments ask by default.
+KIND_GITHUB_PUSH_BRANCH = "github.push_branch"  # push the task's copy to a new branch
+KIND_GITHUB_OPEN_PR = "github.open_pr"  # push and open a pull request
+KIND_GITHUB_ISSUE = "github.issue"  # open an issue
+KIND_GITHUB_ISSUE_COMMENT = "github.issue_comment"  # comment on an issue or pull request
+GITHUB_KINDS = (
+    KIND_GITHUB_PUSH_BRANCH,
+    KIND_GITHUB_OPEN_PR,
+    KIND_GITHUB_ISSUE,
+    KIND_GITHUB_ISSUE_COMMENT,
+)
+
+# v0.2 MCP connector write tools: one kind per allowlisted tool, mcp.<server>.<tool>.
+MCP_KIND_PREFIX = "mcp."
+_MCP_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
 BUILTIN_ACTION_MODULES = (
     "opendot.actions.reply",
     "opendot.actions.notify",
     "opendot.notes",
     "opendot.schedules",
+)
+
+FEATURE_ACTION_MODULES = (
+    "opendot.github.actions",
+    "opendot.gateway.actions",
 )
 
 
@@ -193,3 +230,43 @@ def default_registry() -> ActionRegistry:
         for handler in module.ACTION_HANDLERS:
             registry.register(handler)
     return registry
+
+
+def build_registry(config: Config) -> ActionRegistry:
+    """default_registry() plus the handlers from FEATURE_ACTION_MODULES for this config.
+
+    A feature module that is not installed is skipped. Any other import error is
+    raised, so a broken module is not silently left out.
+    """
+    registry = default_registry()
+    for module_name in FEATURE_ACTION_MODULES:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name is not None and module_name.startswith(exc.name):
+                continue
+            raise
+        for handler in module.action_handlers(config):
+            registry.register(handler)
+    return registry
+
+
+def mcp_kind(server: str, tool: str) -> str:
+    """The action kind for one connector write tool: mcp.<server>.<tool>."""
+    for name in (server, tool):
+        if not isinstance(name, str) or not _MCP_NAME.match(name) or "__" in name:
+            raise ValueError(f"bad connector or tool name {name!r}")
+    return f"{MCP_KIND_PREFIX}{server}.{tool}"
+
+
+def parse_mcp_kind(kind: str) -> tuple[str, str] | None:
+    """(server, tool) for an mcp.<server>.<tool> kind, else None."""
+    if not isinstance(kind, str) or not kind.startswith(MCP_KIND_PREFIX):
+        return None
+    parts = kind[len(MCP_KIND_PREFIX) :].split(".")
+    if len(parts) != 2:
+        return None
+    server, tool = parts
+    if not all(_MCP_NAME.match(p) and "__" not in p for p in parts):
+        return None
+    return server, tool

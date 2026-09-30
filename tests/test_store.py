@@ -21,7 +21,15 @@ from opendot.models import (
     Step,
     TaskState,
 )
-from opendot.store import LeaseLost, LockBusy, NotFound, Store, StoreError, WorkerLock
+from opendot.store import (
+    SCHEMA_VERSION,
+    LeaseLost,
+    LockBusy,
+    NotFound,
+    Store,
+    StoreError,
+    WorkerLock,
+)
 
 
 def make_task(store: Store, text: str = "summarise the report", **kw):
@@ -36,7 +44,7 @@ def test_migrate_from_empty_and_twice(tmp_path, clock):
     store = Store(path, clock=clock)
     assert store.schema_version() is None
     store.migrate()
-    assert store.schema_version() == 1
+    assert store.schema_version() == SCHEMA_VERSION
     task = make_task(store)
     store.migrate()
     assert store.get_task(task.id).text == "summarise the report"

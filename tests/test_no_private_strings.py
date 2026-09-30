@@ -66,7 +66,9 @@ def _text_files() -> list[Path]:
         if not path.is_file():
             continue
         relative = path.relative_to(ROOT)
-        if any(part in SKIP_DIRS or part.endswith(".egg-info") for part in relative.parts[:-1]):
+        if any(part in SKIP_DIRS or part.endswith(".egg-info") for part in relative.parts[:-1]) or (
+            relative.parts == (".git",)
+        ):
             continue
         if path.name in SKIP_FILES or path.suffix.lower() in BINARY_SUFFIXES:
             continue

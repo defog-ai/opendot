@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from opendot import __version__, cron, help
-from opendot.actions import KIND_NOTIFY, KIND_REPLY, default_registry
+from opendot.actions import KIND_NOTIFY, KIND_REPLY, build_registry
 from opendot.approvals import NotAllowedToDecide
 from opendot.backends import BackendError, CommandRunner, SubprocessRunner
 from opendot.channels import ChannelError, enabled_channels
@@ -32,6 +32,8 @@ from opendot.container_contract import (
     dockerfile_path,
     verify_image_args,
 )
+from opendot.extensions import doctor_checks as feature_doctor_checks
+from opendot.extensions import register_feature_cli
 from opendot.models import (
     ActionStatus,
     ApprovalStatus,
@@ -53,6 +55,7 @@ from opendot.rules import (
     approve_operator_rule,
     remove_operator_rule,
 )
+from opendot.sandbox import SNAP_DOCKER_ADVICE, detect_snap_docker, snap_docker_problems
 from opendot.schedules import (
     ScheduleError,
     create_schedule,
@@ -72,7 +75,7 @@ UNFINISHED = [
 DEMO_SCRIPT_NAME = "demo-script.json"
 DEMO_REPLY = (
     "Hello. This answer comes from the scripted fake backend, so no model ran. "
-    "Switch backend.worker.kind and backend.reviewer.kind to codex or claude_code "
+    "Switch backend.worker.kind and backend.reviewer.kind to codex, claude_code or opencode "
     "for real answers."
 )
 
@@ -125,7 +128,9 @@ def _orchestrator(config: Config, store: Store, *, run_steps: bool) -> Orchestra
         worker=_NoSteps(),
         reviewer=_NoSteps(),
         channels={c.name: c for c in enabled_channels(config)},
-        registry=default_registry(),
+        # The full registry: an approval given here runs the approved action in
+        # this process, and that may be a GitHub or connector action.
+        registry=build_registry(config),
     )
 
 
@@ -175,8 +180,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     if path.exists() and not args.force:
         raise CliError(f"{path} already exists; pass --force to replace it")
     worker, reviewer = args.worker, args.reviewer
+    models = {"worker": args.worker_model, "reviewer": args.reviewer_model}
     if args.demo:
         worker = reviewer = "fake"
+        models = {"worker": "", "reviewer": ""}
+    for role, kind in (("worker", worker), ("reviewer", reviewer)):
+        if kind == "opencode" and "/" not in models[role].strip("/"):
+            raise CliError(
+                f"the opencode backend needs --{role}-model provider/model; "
+                "run `opencode models` to list them"
+            )
     state_root = Path(args.state_root).expanduser().resolve() if args.state_root else None
 
     lines = [
@@ -188,11 +201,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     lines += [
         "[backend.worker]",
         f"kind = {_toml_string(worker)}",
-        'model = ""',
+        f"model = {_toml_string(models['worker'])}",
         "",
         "[backend.reviewer]",
         f"kind = {_toml_string(reviewer)}",
-        'model = ""',
+        f"model = {_toml_string(models['reviewer'])}",
         "",
     ]
     if args.demo:
@@ -294,7 +307,7 @@ def doctor_findings(
             )
         )
     if "anthropic_api" in kinds:
-        found.append(("error", "the anthropic_api backend is not ready in v0.1"))
+        found.append(("error", "the anthropic_api backend is not ready yet"))
     if "codex" in kinds:
         auth = config.codex.auth_file
         if auth.is_file():
@@ -313,6 +326,35 @@ def doctor_findings(
                     "or use an API key",
                 )
             )
+    if "opencode" in kinds:
+        auth = config.opencode.auth_file
+        providers = sorted(
+            {
+                choice.model.partition("/")[0]
+                for choice in (config.worker_backend, config.reviewer_backend)
+                if choice.kind == "opencode"
+            }
+        )
+        try:
+            logins = json.loads(auth.read_bytes())
+        except (OSError, ValueError):
+            logins = None
+        if not isinstance(logins, dict):
+            found.append(
+                ("error", f"opencode login file {auth} is missing; run `opencode auth login`")
+            )
+        else:
+            for provider in providers:
+                if isinstance(logins.get(provider), dict):
+                    found.append(("ok", f"opencode login for {provider} in {auth}"))
+                else:
+                    found.append(
+                        (
+                            "error",
+                            f"opencode login file {auth} has no login for {provider}; "
+                            f"run `opencode auth login` and choose {provider}",
+                        )
+                    )
     if "fake" in kinds:
         script = config.fake.script
         if script is not None and not script.is_file():
@@ -320,7 +362,7 @@ def doctor_findings(
         else:
             found.append(("warn", "the fake backend is in use; no model will run"))
 
-    if kinds & {"codex", "claude_code"}:
+    if kinds & {"codex", "claude_code", "opencode"}:
         try:
             ok, message = _check_image(config, runner)
         except OSError:
@@ -339,6 +381,11 @@ def doctor_findings(
                 )
             )
 
+    if kinds & {"codex", "claude_code"}:
+        found += _snap_findings(config, runner)
+    for name, ok, detail in feature_doctor_checks(config):
+        found.append(("ok" if ok else "error", f"{name}: {detail}"))
+
     slack = config.slack
     if slack.enabled:
         if slack.bot_token(env):
@@ -356,12 +403,41 @@ def doctor_findings(
     return found
 
 
+def _snap_findings(config: Config, runner: CommandRunner) -> list[tuple[str, str]]:
+    """Findings for Docker installed as a snap package. Empty for other Docker installs."""
+    root_dir: str | None = None
+    try:
+        result = runner.run(
+            [config.sandbox.docker, "info", "--format", "{{.DockerRootDir}}"], timeout=30
+        )
+        if result.returncode == 0:
+            root_dir = result.stdout.strip() or None
+    except OSError:
+        return []
+    if not detect_snap_docker(config.sandbox.docker, root_dir):
+        return []
+    problems = snap_docker_problems(config, True)
+    if not problems:
+        return [
+            (
+                "ok",
+                "Docker is the snap package; sandbox.no_new_privileges is false and no "
+                "mounted folder is under /tmp (see SECURITY.md for the trade-off)",
+            )
+        ]
+    return [("error", f"snap Docker: {problem}") for problem in problems]
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     config = _load(args)
     findings = doctor_findings(config, _runner())
     for level, message in findings:
         print(f"[{level}] {message}")
     errors = sum(1 for level, _ in findings if level == "error")
+    if any(message.startswith("snap Docker:") for _, message in findings):
+        print()
+        print(SNAP_DOCKER_ADVICE)
+        print()
     print(f"{errors} error(s).")
     return 1 if errors else 0
 
@@ -384,7 +460,7 @@ def cmd_verify_image(args: argparse.Namespace) -> int:
     config = _load(args)
     command = verify_image_args(config.sandbox.docker, config.sandbox.image)
     result = _runner().run(command, timeout=300)
-    check = check_verify_output(result.returncode, result.stdout)
+    check = check_verify_output(result.returncode, result.stdout, require_browser=True)
     if check.ok:
         print(f"{config.sandbox.image} has every required tool and runs as a non-root user.")
         return 0
@@ -833,11 +909,17 @@ def build_parser() -> argparse.ArgumentParser:
         sub.set_defaults(handler=handler)
         return sub
 
-    backend_kinds = ["codex", "claude_code", "fake"]
+    backend_kinds = ["codex", "claude_code", "opencode", "fake"]
     p = add("init", cmd_init)
     p.add_argument("--state-root", help="folder for the database, runs and logs")
     p.add_argument("--worker", choices=backend_kinds, default="codex")
     p.add_argument("--reviewer", choices=backend_kinds, default="claude_code")
+    p.add_argument(
+        "--worker-model", default="", help="model for the worker; opencode needs provider/model"
+    )
+    p.add_argument(
+        "--reviewer-model", default="", help="model for the reviewer; opencode needs provider/model"
+    )
     p.add_argument(
         "--demo",
         action="store_true",
@@ -925,6 +1007,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the crontab line and change nothing",
     )
     p.add_argument("--remove", action="store_true", help="remove the OpenDot entry")
+
+    # github, browser and connectors, plus `init --with-factiq`.
+    register_feature_cli(commands)
     return parser
 
 

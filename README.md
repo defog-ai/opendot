@@ -1,32 +1,105 @@
 # OpenDot
 
-OpenDot is a self-hosted assistant that you run on your own machine. You give it
-work from the command line or from Slack. A coding-agent CLI (OpenAI Codex or
-Claude Code) does each model step inside a locked-down Docker container. The
-OpenDot host on your machine decides which proposed actions actually happen: it
-checks each one against your rules, has a second model from a different vendor
-review it, and asks you when a rule says so. OpenDot can wait and come back to a
-task later, run saved schedules, and keep private notes about each person it
-works for.
+**An AI assistant that runs on your own computer, takes requests in Slack or
+your terminal, and uses the AI subscription you already pay for.**
 
-OpenDot is inspired by OpenAI's dots, which OpenAI
-[announced](https://openai.com/index/introducing-dots/) on 2026-09-29.
-**OpenDot is not affiliated with or endorsed by OpenAI.** It is an independent
-open-source project under the Apache 2.0 license.
+<p align="center">
+  <img src="docs/demo.svg" width="820" alt="OpenDot in a Slack channel. First it fixes a signup bug, runs the tests, and opens a pull request after the person replies approve 12. Then it sets up a weekday check of a pricing page and reports a price change the next morning.">
+</p>
+<p align="center"><sub>The grey lines show what happens on your machine. Slack shows only the
+request, the question for your approval, and the answer.</sub></p>
 
-Version 0.1 is an early release. Read [SECURITY.md](SECURITY.md) before you give
-it real work: the step containers have network access by default, and they hold
-the model login they need.
+You ask for something in plain words. OpenDot does the work in a locked-down
+container on your machine. A second AI model checks every action before it
+happens, and anything that matters (a pull request, a new schedule, a message
+to someone else) waits for your "approve".
 
-## Quickstart
+> [!IMPORTANT]
+> OpenDot runs AI agents that have a shell and internet access. Read
+> [SECURITY.md](SECURITY.md) before you give it real work.
 
-You need Linux (macOS is untested), Python 3.11 or newer, [uv](https://docs.astral.sh/uv/)
-and, for real model steps, Docker from docker.com (see "Known limits").
+## What you can ask it
 
-### 1. Try it with no model and no Docker
+| Ask it to... | What happens |
+| --- | --- |
+| **Answer a question**<br>"Summarise what changed in RFC 9110 section 9" | It reads, researches, and replies in the same thread. |
+| **Fix code and open a pull request**<br>"Add retries to the upload client in acme/api" | It edits a copy of the repository in its container. OpenDot runs your tests, and opens the pull request after you approve. It never pushes to your main branch. |
+| **Use a web browser**<br>"Check the pricing page of example.com" | A Chrome browser inside the container opens pages, clicks, and takes screenshots. |
+| **Use your other tools**<br>"Find last week's notes about the launch" | It calls the MCP servers you connect. You decide which ones, and which of their tools need your approval. |
+| **Look up economic and market data**<br>"How fast have US consumer prices risen since 2019?" | The [FactIQ](https://github.com/defog-ai/factiq-plugin) connector is built in. |
+| **Do something on a schedule**<br>"Every weekday at 9am, tell me if that page changed" | It saves a schedule after you approve it, and can post only when the result changes. |
+| **Wait and come back**<br>"Check again in an hour whether the release is out" | The task sleeps and wakes up later to continue. |
+| **Remember how you like things**<br>"Always give me numbers in a table" | It keeps short notes about each person it works for. You can read, change, and delete them. |
 
-The `--demo` flag sets up a scripted fake backend. It shows the full path of a
-task (work step, review, reply) without a login or a container.
+## Use the subscription you already have
+
+OpenDot does not call an AI model itself. It runs a coding tool that you have
+already logged in to, such as Claude Code, Codex or opencode. If you pay for a
+plan, the work counts against that plan. You do not need a separate API
+account.
+
+| If you pay for | OpenDot runs | Log in once with |
+| --- | --- | --- |
+| Claude Pro or Max | Claude Code | `claude setup-token` |
+| ChatGPT Plus, Pro, Business or Enterprise | Codex | `codex login` |
+| OpenRouter, an opencode plan, or another provider that opencode supports | opencode | `opencode auth login` |
+| Nous Portal, or another provider that Hermes supports | Hermes Agent | not supported yet |
+
+Check your provider's terms for automated use of your plan.
+
+## Pick your models
+
+OpenDot uses two models:
+
+- The **worker** does the task.
+- The **reviewer** checks each action the worker proposes and answers approve
+  or deny. It cannot post, push or call a connector itself.
+
+A reviewer from a different company catches different mistakes, so the default
+is Codex as the worker and Claude Code as the reviewer. You choose both when
+you set up:
+
+```sh
+# The default: Codex works, Claude Code reviews
+opendot init
+
+# Only a Claude subscription: Claude Code does both jobs
+opendot init --worker claude_code --reviewer claude_code
+
+# Only a ChatGPT subscription: Codex does both jobs
+opendot init --worker codex --reviewer codex
+
+# Any model on OpenRouter as the worker, Claude Code as the reviewer
+opendot init --worker opencode --worker-model openrouter/~deepseek/deepseek-pro-latest \
+             --reviewer claude_code
+```
+
+To change a model later, edit the two `[backend...]` sections of your config
+file (`~/.config/opendot/opendot.toml`):
+
+```toml
+[backend.worker]
+kind = "claude_code"   # claude_code, codex or opencode
+model = "opus"         # empty means the tool's own default
+
+[backend.reviewer]
+kind = "codex"
+model = "gpt-5.5"
+```
+
+| Tool | What to write in `model` | Examples |
+| --- | --- | --- |
+| `claude_code` | A name that `claude --model` accepts | `opus`, `sonnet`, `haiku` |
+| `codex` | A model name that Codex accepts | `gpt-5.5`, `gpt-5.4-mini` |
+| `opencode` | `provider/model`, as `opencode models` lists it. Required. | `openrouter/~anthropic/claude-sonnet-latest`, `opencode-go/deepseek-v4-flash` |
+
+The free `opencode/...` models work only inside opencode's own app. Pick a
+model from a provider that you logged in to with `opencode auth login`.
+
+## Try it in one minute
+
+This demo needs no login and no Docker. A scripted fake model answers, so you
+can see a whole task go through: work, review, reply.
 
 ```sh
 uv tool install git+https://github.com/defog-ai/opendot
@@ -37,7 +110,7 @@ opendot --config ./opendot.toml run-once
 opendot --config ./opendot.toml status
 ```
 
-The last command prints the task and its answer:
+The last command prints:
 
 ```text
 Tasks: done 1
@@ -45,205 +118,275 @@ Tasks: done 1
     answer: Hello. This answer comes from the scripted fake backend, so no model ran. ...
 ```
 
-The demo script answers one task only. The scripted review approves action 1
-by number, so a second task's reply gets no verdict, counts as denied, and is not
-sent. Run `opendot --config ./opendot.toml show 1`
-to see every step, action and event that was recorded.
+`opendot --config ./opendot.toml show 1` shows every step and every decision.
 
-### 2. Run it with real models
+## Set it up for real
+
+You need:
+
+- Linux. macOS may work but is not tested.
+- Python 3.11 or newer, and [uv](https://docs.astral.sh/uv/).
+- Docker.
+- A login for at least one tool from the table above.
+
+**1. Install OpenDot.**
 
 ```sh
-opendot init                   # Codex does the work, Claude Code reviews
-opendot build-image            # builds opendot-worker:latest, takes a few minutes
-opendot verify-image           # checks the tools and the non-root user
-codex login                    # writes ~/.codex/auth.json
-claude setup-token             # then: export CLAUDE_CODE_OAUTH_TOKEN=...
-opendot doctor                 # reports what is still missing
+uv tool install git+https://github.com/defog-ai/opendot
+```
+
+**2. Write a config file.** Choose your models here (see
+[Pick your models](#pick-your-models)).
+
+```sh
+opendot init
+```
+
+This writes `~/.config/opendot/opendot.toml` and makes a private folder for
+OpenDot's data.
+
+**3. Build the container image.** This takes a few minutes the first time.
+
+```sh
+opendot build-image
+```
+
+**4. Log in to your AI tools** on this computer. Run the line for each tool
+that you chose:
+
+```sh
+codex login
+opencode auth login
+claude setup-token          # prints a token; then:
+export CLAUDE_CODE_OAUTH_TOKEN=paste-the-token-here
+```
+
+Put the `export` line in your shell profile (for example `~/.bashrc`), so it is
+set every time.
+
+**5. Check everything.**
+
+```sh
+opendot doctor
+```
+
+Each line starts with `[ok]`, `[warn]` or `[error]`. Fix every `[error]` line;
+the line tells you how. See [When something goes wrong](#when-something-goes-wrong).
+
+**6. Give it a first task.**
+
+```sh
 opendot task "Summarise the three main points of RFC 9110 section 9"
-opendot tick                   # one full pass; repeat, or:
-opendot install-cron           # runs `opendot tick` every minute from crontab
+opendot tick
 opendot status
 ```
 
-`opendot init` writes `~/.config/opendot/opendot.toml` with mode 0600. Every
-key and its default is listed in [opendot.example.toml](opendot.example.toml).
-You can also set any key with an environment variable named
-`OPENDOT_<SECTION>_<KEY>`, for example `OPENDOT_CORE_STATE_ROOT`.
+`opendot tick` does one round of work. To have OpenDot work on its own, run
+`opendot install-cron` once. It then does a round every minute.
 
-To use one vendor only, pass `--worker` and `--reviewer` to `opendot init`, for
-example `--worker claude_code --reviewer claude_code`. `opendot doctor` then
-warns you, because a reviewer from a different vendor gives a more independent
-check.
+Every setting and its default is in
+[opendot.example.toml](opendot.example.toml).
 
-### 3. Optional: Slack
+### Talk to it in Slack
 
-Create a Slack app from [slack-app-manifest.yml](slack-app-manifest.yml), install
-it in your workspace, and invite the bot to the channels it should read. Then set
-these keys:
+1. Create a Slack app from [slack-app-manifest.yml](slack-app-manifest.yml) and
+   install it in your workspace.
+2. Copy the bot token (it starts with `xoxb-`) and put it in a variable:
+   `export OPENDOT_SLACK_BOT_TOKEN=xoxb-...`
+3. Invite the bot to the channels it should read.
+4. Add this to your config file, with your own channel and user ids:
 
 ```toml
 [channels.slack]
 enabled = true
-bot_token_env = "OPENDOT_SLACK_BOT_TOKEN"   # the variable that holds the xoxb- token
-channels = ["C0EXAMPLE1"]                  # channel ids to read
-allowed_users = ["U0EXAMPLE1"]             # member ids that may give work
+bot_token_env = "OPENDOT_SLACK_BOT_TOKEN"
+channels = ["C0EXAMPLE1"]          # channels it reads
+allowed_users = ["U0EXAMPLE1"]     # only these people can give it work
 ```
 
-An empty `allowed_users` list lets nobody give work. OpenDot reads Slack by
-polling on each `tick`, so replies arrive on the next pass, not at once.
+To find an id in Slack: open the channel or the person's profile, click the
+name at the top, and copy the id at the bottom of the panel.
+
+Then mention the bot in one of those channels: `@opendot what can you do?`
+
+OpenDot checks Slack each time `tick` runs, so an answer comes on the next
+round, not at once.
+
+## Turn on pull requests, the browser and MCP tools
+
+Each of these is off until you add one block to your config file. Run
+`opendot doctor` after each change; it checks the new block.
+[docs/features.md](docs/features.md) explains each one in full.
+
+### Pull requests
+
+Make a GitHub fine-grained token that can write the contents, pull requests
+and issues of one repository. Put it in a variable, for example
+`export OPENDOT_GITHUB_TOKEN=github_pat_...`. Then add:
+
+```toml
+[github]
+token_env = "OPENDOT_GITHUB_TOKEN"   # the host reads it; no container gets it
+
+[[repositories]]
+name = "app"
+remote = "https://github.com/example/app.git"
+checks = ["uv run pytest -q"]        # must pass before OpenDot asks you
+```
+
+```sh
+opendot github fetch
+opendot task "In app, fix the typo in the README title and open a pull request"
+opendot tick                  # the task stops and asks you to approve
+opendot queue                 # shows the approval number, the commit and the diff
+opendot approve 1
+opendot tick                  # OpenDot pushes the branch and opens the pull request
+```
+
+The model only edits files. OpenDot makes the commit, runs your checks, and
+asks you before every push and every pull request.
+
+For a git server that is not GitHub, set `forge = "none"` on the repository.
+OpenDot can then push a branch, but not open a pull request. See
+[docs/features.md](docs/features.md#pull-requests).
+
+### A web browser
+
+```toml
+[browser]
+enabled = true
+```
+
+```sh
+opendot build-image           # rebuild once, so the image holds the browser
+opendot browser check --url https://example.com
+opendot task "Open https://example.com and tell me the page title"
+```
+
+The browser runs inside the step container. It starts with no cookies and no
+saved logins. Screenshots are saved in the task's folder.
+
+### MCP tools
+
+Add one block for each MCP server. Mark each tool `read` or `write`:
+
+```toml
+[[mcp_servers]]
+name = "docs"
+url = "https://mcp.example.com/mcp"
+auth = "bearer_env"                   # "none", "bearer_env" or "oauth"
+auth_env = "DOCS_MCP_TOKEN"           # the variable that holds the key
+tools = [
+  { name = "search", mode = "read" },         # the model can call it
+  { name = "create_note", mode = "write" },   # asks you first, every time
+]
+```
+
+```sh
+opendot connectors test docs   # checks that the tools exist on the server
+opendot connectors calls       # shows every call the model made
+```
+
+The key stays on your machine. The model reaches the server through a small
+relay that OpenDot runs, and the relay adds the key.
+
+### FactIQ
+
+[FactIQ](https://factiq.com) gives OpenDot public economic and financial data.
+It is built in:
+
+```sh
+opendot init --with-factiq    # or add [factiq] enabled = true to your config
+export FACTIQ_API_KEY=...     # or: opendot connectors login factiq
+opendot connectors test factiq
+opendot task "How fast have US consumer prices risen since 2019?"
+```
+
+## You stay in control
+
+The model never acts by itself. It can only *propose* actions. A separate
+program on your machine, the OpenDot host, decides what happens. The host keeps
+the Slack token, the GitHub token, the connector keys, your rules, and the
+approval records. The model's container gets none of them. It gets only the
+login of its own AI tool.
+
+Every proposed action goes through three checks:
+
+1. **Your rules.** Each kind of action has one of four levels:
+
+   | Level | Meaning |
+   | --- | --- |
+   | `allow` | Runs after the reviewer approves it. |
+   | `preapproved` | Runs only if you approved this kind of action before. |
+   | `ask` | Waits until you reply "approve" or "deny". |
+   | `hand_off` | Never runs. You get the prepared material and do it yourself. |
+
+   Some limits cannot be lowered. New schedules, rule changes, pushes, pull
+   requests and MCP `write` tools always ask. Anything that touches passwords,
+   payments, purchases, or access is always handed to you.
+2. **A second model reviews it.** If the review fails or says no, the action
+   does not run. A task stops after 3 refusals in a row, or 10 in the last 50.
+3. **Your approval, when a rule says so.** An approval covers one task and one
+   exact message or change. If the text changes, OpenDot asks again.
+
+Each step runs in a new container. The container has no extra Linux
+privileges, a read-only system disk, CPU and memory limits, and your user id
+instead of root.
+
+[docs/how-it-works.md](docs/how-it-works.md) explains each part.
+[SECURITY.md](SECURITY.md) lists what OpenDot protects against and what it does
+not.
+
+## When something goes wrong
+
+| You see | Do this |
+| --- | --- |
+| `Codex login file ... is missing` | Run `codex login`. |
+| `CLAUDE_CODE_OAUTH_TOKEN is not set` | Run `claude setup-token`, then `export CLAUDE_CODE_OAUTH_TOKEN=...`. |
+| `opencode login file ... is missing`, or `has no login for ...` | Run `opencode auth login` and choose the provider in your model name. |
+| `image ... is not built` | Run `opendot build-image`. |
+| `state folder ... has mode 775; it must be 700` | Run `chmod 700` on that folder. |
+| A step fails with `operation not permitted` | Your Docker is the snap package. See the note below. |
+| Nothing happens after `opendot task` | Run `opendot tick`, or `opendot install-cron` once. |
+| A task is stuck | `opendot show N` tells you why. `opendot retry N`, `opendot skip N` or `opendot stop N` moves it on. |
+
+**Docker from the snap package** (Ubuntu's default) blocks one of OpenDot's
+container protections. Either install Docker from docker.com, or add
+`no_new_privileges = false` under `[sandbox]` in your config and accept that
+weaker setting. Snap Docker also cannot see folders under `/tmp`, so keep
+OpenDot's data folder out of `/tmp`. The default place, under your home folder,
+works. `opendot doctor` tells you when either setting is wrong.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `init` | Write a config file and create the state folder. |
-| `migrate` | Create or update the SQLite database. |
-| `doctor` | Check the config, the logins, Docker and the image. |
-| `build-image`, `verify-image` | Build the step image from the packaged Dockerfile, then check it. |
-| `task "..."` | Add a task from the command line. |
-| `ingest` | Read new messages from every enabled channel once. |
-| `run-once` | Move the oldest queued task forward by one step. |
-| `tick` | One full pass: expire approvals, wake waiting tasks, start due schedules, read channels, run tasks, deliver replies. |
-| `status`, `queue`, `show N` | Look at task counts and answers, unfinished work and approvals, or one task in full. |
-| `approve N`, `deny N` | Decide an approval request. |
-| `retry N`, `skip N`, `stop N` | Queue a finished task again, skip an unfinished one, or stop one now. |
-| `notes`, `schedules`, `rules` | List and change saved notes, schedules and permission rules. |
-| `install-cron` | Add or remove the crontab line that runs `opendot tick`. |
+| `init`, `doctor` | Write a config file; check logins, Docker, and the image. |
+| `build-image`, `verify-image` | Build and check the container image. |
+| `task "..."` | Give it work from the terminal. |
+| `tick`, `install-cron` | Do one round of work; do a round every minute from cron. |
+| `status`, `queue`, `show N` | See tasks, waiting approvals, or one task in full. |
+| `approve N`, `deny N` | Answer an approval request. |
+| `retry N`, `skip N`, `stop N` | Run a task again, skip it, or stop it now. |
+| `notes`, `schedules`, `rules` | List and change notes, schedules, and rules. |
+| `github repos`, `fetch`, `publications` | List your repositories, download them, and list what OpenDot pushed or opened. |
+| `browser check` | Open a page with the browser in the container. |
+| `connectors list`, `test`, `calls`, `login` | List MCP servers, check one, show the calls, or sign in to one. |
 
-Run `opendot COMMAND --help` for the options of each command.
+`opendot COMMAND --help` shows the options of each command. `opendot --help`
+lists every command.
 
-## The trust boundary
+## Current limits
 
-The model never acts directly. It can only propose actions. The OpenDot host is
-a Python process on your machine, and it holds everything the model does not
-get: the SQLite database, the Slack token, your rules and the approval records.
+- It works on one task step at a time.
+- It checks Slack about once a minute, so replies are not instant.
+- In a shared Slack channel, other members can see a proposed reply before you
+  approve it.
+- A follow-up from a different person in a finished thread starts a new task.
+- The browser has no saved logins, and OpenDot never types passwords for you.
+- No email yet.
 
-```text
-  you (CLI or Slack)
-        |
-        v
-+----------------------------- OpenDot host (your machine) ------------------------------+
-|  SQLite state   rules   approvals   notes   schedules   Slack token   outbox           |
-|                                                                                        |
-|  1. work step  ------------------------------> [ step container: Codex or Claude Code ] |
-|        <------ JSON: reply, status, proposed actions                                    |
-|  2. action registry: unknown kinds are refused; each action is rebuilt from the task   |
-|  3. rule engine: allow / preapproved / ask / hand_off, raised to fixed floors          |
-|  4. review step ----------------------------> [ step container: the other vendor ]      |
-|        <------ approve or deny for each action (no answer counts as deny)               |
-|  5. approval: "ask" parks the task until you approve or deny it                        |
-|  6. outbox: the host posts the reply or runs the action                                 |
-+----------------------------------------------------------------------------------------+
-```
-
-What each part does:
-
-- **Step container.** Each model step runs in a new `docker run --rm` container.
-  It has no Linux capabilities, a read-only root file system, CPU, memory and
-  process limits, and runs as your user id, not root. It never gets the Docker
-  socket, the state folder or the Slack token. It gets one work folder, the
-  session files of its own CLI, and the one login that CLI needs.
-- **Action registry.** OpenDot v0.1 has four action kinds: `reply.post` (answer
-  in the requester's thread), `notify.post` (send a schedule's result to the
-  place the schedule names), `note.write` (save a note about the requester) and
-  `schedule.create` (save a new schedule). The host builds the target of each
-  action from the task itself, not from the model's text, so a reply can only go
-  back to the thread the request came from.
-- **Rules.** Each action gets one of four levels. `allow` runs after review.
-  `preapproved` runs only when a stored approval covers it. `ask` stops the task
-  until you approve or deny. `hand_off` never runs; you get the prepared material
-  instead. Fixed floors cannot be lowered by any rule: new schedules and rule
-  changes always ask; credentials, payments, purchases and access changes are
-  always handed off. Only the operator on the local command line can add or
-  approve rules.
-- **Reviewer.** A second model, by default from a different vendor, sees the
-  request, the proposed actions and the evidence, and gives a verdict for each
-  action. A failed, missing or unreadable review counts as a denial. A task stops
-  after 3 denials in a row or 10 denials in the last 50 reviews. These cutoffs
-  are the ones that [Codex auto-review](https://learn.chatgpt.com/docs/sandboxing/auto-review)
-  documents.
-- **Approvals.** An approval belongs to one task. A follow-up, a retry or a
-  scheduled run starts with none. For an action that posts or sends something,
-  the approval also covers one exact payload: the host stores a digest of it, and
-  the approval does not apply if the payload changes. Only the requester, on the
-  channel the task came from, and the operator on the local command line can
-  decide an approval.
-- **Budgets.** Each task has limits on active time, steps, turns and tokens.
-  There is no money limit, because subscription logins do not report a cost.
-
-Text from requesters, channels and files is marked as untrusted in every prompt.
-The reviewer is told to judge actions against the requester's own request, not
-against instructions found in that text.
-
-## Compared with OpenAI's dots
-
-This table compares OpenDot v0.1 with features OpenAI has described in public.
-Each row links to the OpenAI page it is based on. "Similar" means OpenDot has a
-feature of the same kind, not that it works the same way or as well.
-
-| Feature described by OpenAI | Source | OpenDot v0.1 |
-| --- | --- | --- |
-| Always-on agent that keeps working on ongoing work between conversations | [Introducing dots](https://openai.com/index/introducing-dots/) | **Partial.** One worker on your machine, started by cron or `tick --loop`. Tasks keep their state between passes. |
-| Talk to it in Slack | [Getting started with your dot](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot) | **Similar.** Slack (by polling) and the local command line. |
-| Pauses and wakes up to continue work | [Tasks and memory](https://learn.chatgpt.com/codex/dots/tasks-and-memory.md) | **Similar.** A step can end with "wait until"; `tick` wakes the task at that time. |
-| Saved schedules with time zone, end date, notify rule and destination | [Tasks and memory](https://learn.chatgpt.com/codex/dots/tasks-and-memory.md) | **Similar.** Cron cadence, IANA time zone, optional end, notify `always` or `changed`, fixed destination. |
-| Work started by events from connected services | [Tasks and memory](https://learn.chatgpt.com/codex/dots/tasks-and-memory.md), [Automations](https://learn.chatgpt.com/docs/automations.md) | **Partial.** Only new Slack messages from allowed users. |
-| Four rule levels, plus actions that always need confirmation or a hand-off | [Controls](https://learn.chatgpt.com/codex/dots/controls.md), [Safety blog](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/) | **Similar.** The four levels are modelled on the ones OpenAI describes, with fixed floors. |
-| A separate reviewer checks each action; the turn stops after 3 denials in a row or 10 in the last 50 | [Auto-review](https://learn.chatgpt.com/docs/sandboxing/auto-review) | **Similar.** Same cutoffs by default; the reviewer can be a different vendor. |
-| An approval stays tied to its task | [Safety blog](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/) | **Similar.** Tied to the task and to a digest of the exact payload. |
-| The agent drafts rule changes and the user approves each one | [Controls](https://learn.chatgpt.com/codex/dots/controls.md) | **Not in v0.1.** Only the operator adds rules. |
-| Private notes about preferences and ongoing work | [Tasks and memory](https://learn.chatgpt.com/codex/dots/tasks-and-memory.md) | **Similar.** Notes per requester, which the operator can list, edit and delete. |
-| Background agents that run in parallel | [Tasks and memory](https://learn.chatgpt.com/codex/dots/tasks-and-memory.md) | **Not in v0.1.** One task step runs at a time. |
-| Its own cloud computer with a browser | [dots in Codex](https://learn.chatgpt.com/codex/dots), [Safety blog](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/) | **Not in v0.1.** A container with a shell and a work folder, no browser. |
-| Apps and MCP servers through plugins | [Plugins](https://learn.chatgpt.com/docs/plugins.md) | **Not in v0.1.** |
-| Proactive research with read-only tools when idle | [Safety blog](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/) | **Not in v0.1.** |
-| A private sign-in form, so the model never sees credentials | [Credentials FAQ](https://help.openai.com/articles/20001529), [Safety blog](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/) | **Not in v0.1.** Credential actions are always handed off to you. |
-
-## Not in v0.1
-
-These are not built yet:
-
-- Coding tasks that end in a pull request.
-- Slack Socket Mode or the Events API. OpenDot polls Slack instead.
-- A browser inside the step container.
-- MCP servers and app connectors.
-- Gmail, or any email channel or trigger.
-- Proactive research when idle.
-- Parallel runs: one worker runs one task step at a time.
-- Rules drafted by the agent.
-- The `anthropic_api` backend. The file exists, but `opendot doctor` reports it
-  as not ready.
-
-## Known limits
-
-- **Docker from a snap package does not work.** It refuses containers started
-  with `no-new-privileges` and cannot see folders under `/tmp`. Install Docker
-  from docker.com. Rootless Docker is untested.
-- **Network access is open by default.** Step containers use the Docker network
-  `bridge`, so they can reach any host your machine can reach. With
-  `sandbox.network = "none"` the model CLIs cannot reach their own API. See
-  [SECURITY.md](SECURITY.md).
-- **Claude Code has no turn limit flag,** so the per-step turn limit applies only
-  to Codex. The task turn and time budgets still apply to both.
-- **Codex review steps can still run shell commands.** The work folder is
-  read-only in review steps and no host variables are passed, but the network
-  follows the config.
-- **A Codex token refresh inside the container is written back to your
-  `~/.codex/auth.json`.** OpenDot copies it back only when the file still
-  belongs to the same account and your own file did not change during the step.
-- **A follow-up from a different person starts fresh.** When another allowed
-  user mentions OpenDot in a finished thread, the new task does not see the
-  earlier request or its reply, because the earlier session holds the first
-  requester's notes. A follow-up from the same person continues that session.
-- **Approval and hand-off messages show the proposed text in the task's
-  thread.** In a shared Slack channel, other members can read a proposed reply
-  before you approve it.
-- **Resuming a Claude Code session in a later step is untested.**
-- **Codex steering and a retry of a stalled Codex turn are not built.** A stop
-  message ends the step; other messages are read at the start of the next step.
-- **Slack rate limits.** Read a few channels only, run `tick` at most once a
-  minute, and expect at most 20 active threads to be read on each pass.
-- **Replies from the fake backend are scripted.** Use it for tests and the demo.
+The full list is in [docs/how-it-works.md](docs/how-it-works.md#known-limits).
 
 ## Development
 
@@ -254,8 +397,14 @@ uv run pytest -q
 uv run ruff check .
 ```
 
+`uv run python docs/make_demo_svg.py docs/demo.svg` redraws the animation.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+OpenDot is an independent open-source project, inspired by the dots assistant
+that OpenAI [announced](https://openai.com/index/introducing-dots/) on
+2026-09-29. It is not affiliated with or endorsed by OpenAI, Anthropic, Nous
+Research, or the opencode project.
