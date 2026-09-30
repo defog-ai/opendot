@@ -609,7 +609,8 @@ class Gateway:
                 text = (
                     f"{tool} changes something outside this step, so it is not a tool here. "
                     f"Propose it as the action kind mcp.{server.name}.{tool} with the tool's "
-                    "arguments as the action's fields; the host asks the person before it runs."
+                    "arguments as the action's fields; the host runs it after this step, "
+                    "without asking."
                 )
             else:
                 mode = GatewayMode.READ

@@ -485,7 +485,7 @@ class FactiqConfig:
     auth: str  # "bearer_env" (a FactIQ API key) or "oauth"
     api_key_env: str
     instructions: bool  # share the plugin's public skill files with the model
-    feedback: bool  # allow send_feedback, as an action that asks first
+    feedback: bool  # allow send_feedback, as an action
 
 
 _GITHUB_REMOTE = (

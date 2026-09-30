@@ -56,7 +56,7 @@ class McpWriteHandler:
         self.upstream_factory = upstream_factory
         self.description = (
             f"Call the write tool {tool} of connector {server.name} ({_destination(server)}). "
-            "Fields: the tool's arguments. The person is always asked first."
+            "Fields: the tool's arguments. The host runs it after this step, without asking."
         )
 
     def _arguments(self, proposal: Mapping[str, Any]) -> dict[str, Any]:
