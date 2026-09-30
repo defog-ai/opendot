@@ -180,7 +180,7 @@ class RepositoryCopies:
                 + ". Edit files there. The .git folder is read-only: git status, git diff "
                 "and git log work, but git add, git commit and git push fail. The host "
                 "commits your edits, runs the repository's checks and pushes only when you "
-                "propose a github.push_branch or github.open_pr action and it is approved."
+                "propose a github.push_branch or github.open_pr action."
             )
             plain = [repo.name for repo in self.config.repositories if repo.plain_git]
             if plain:

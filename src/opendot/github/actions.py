@@ -1,16 +1,16 @@
 """The four GitHub action handlers.
 
-prepare() does the host work that decides what would be published, so the
-reviewer and the approver see the exact result:
+prepare() does the host work that decides what will be published, and records
+the exact result in the action's payload:
 - push and pull request: commit the copy's files, check the changed files, run
   the repository's checks in a sandbox container, and record the commit, its
   tree hash, the change list, a bounded diff and the check results;
 - all four: read the repository's visibility from GitHub and, for a public
   repository, refuse text that looks private (opendot.github.public_text).
 
-execute() runs after rules, review and approval, possibly in another process
-(`opendot approve`). It uses only the payload and the store. Before it pushes it
-checks that the copy still holds the approved commit and tree. Each publication
+execute() runs right after prepare(). It uses only the payload and the store.
+Before it pushes it checks that the copy still holds the prepared commit and
+tree. Each publication
 carries a marker derived from its content; a retry finds the earlier result by
 that marker in the store or on GitHub and does not publish twice.
 
@@ -49,7 +49,6 @@ from opendot.github.containers import image_id, run_repository_commands
 from opendot.github.public_text import find_private_text
 from opendot.github.step import git_url, network_env
 from opendot.models import (
-    Level,
     PublicationKind,
     PublicationState,
     RepoVisibility,
@@ -119,8 +118,6 @@ class _GitHubHandler:
 
     kind = ""
     outward = True
-    default_level = Level.ASK
-    floor = Level.ASK
     description = ""
     allows_plain_git = False  # True only where a forge = "none" repository makes sense
 
@@ -415,7 +412,7 @@ class _BranchHandler(_GitHubHandler):
             names = ", ".join(f.path for f in added_binary[:20])
             raise InvalidProposal(
                 f"{self.kind}: {repo.name} is public and the change adds or edits binary files, "
-                f"which the approver cannot read: {names}. Remove them and propose again. The "
+                f"which the diff cannot show: {names}. Remove them and propose again. The "
                 "operator can allow binary files in public repositories with "
                 "github.allow_binary_public = true."
             )
@@ -447,7 +444,7 @@ class _BranchHandler(_GitHubHandler):
         if len(patch) > github.max_diff_chars:
             raise InvalidProposal(
                 f"{self.kind}: the diff is {len(patch)} characters, more than "
-                f"github.max_diff_chars ({github.max_diff_chars}). The approver must see the "
+                f"github.max_diff_chars ({github.max_diff_chars}). The task log keeps the "
                 "whole change, so the host does not cut it. Split the work into smaller "
                 "pushes, or ask the operator to raise github.max_diff_chars."
             )
@@ -498,7 +495,7 @@ class _BranchHandler(_GitHubHandler):
         worktree = self._worktree(ctx, repo)
         copy = Path(worktree.path)
         if worktree.branch != payload["branch"]:
-            raise InvalidProposal("the copy is on a different branch than the approved one")
+            raise InvalidProposal("the copy is on a different branch than the prepared one")
         if payload["branch"] == repo.default_branch:
             raise InvalidProposal("the host never pushes to the default branch")
         if g.head_sha(copy) != payload["commit"] or g.worktree_tree(copy) != payload["tree"]:
@@ -552,8 +549,6 @@ class _BranchHandler(_GitHubHandler):
 
 class PushBranchHandler(_BranchHandler):
     kind = KIND_GITHUB_PUSH_BRANCH
-    default_level = Level.ASK
-    floor = Level.ASK
     allows_plain_git = True
     description = (
         "Push your edits in a repository copy to the task's own branch on the repository's "
@@ -596,8 +591,6 @@ class PushBranchHandler(_BranchHandler):
 
 class OpenPullRequestHandler(_BranchHandler):
     kind = KIND_GITHUB_OPEN_PR
-    default_level = Level.ASK
-    floor = Level.ASK
     description = (
         "Push your edits in a repository copy to the task's branch and open a pull request "
         "into the default branch. When the task already has an open pull request, the new "
@@ -697,8 +690,6 @@ class OpenPullRequestHandler(_BranchHandler):
 
 class IssueHandler(_GitHubHandler):
     kind = KIND_GITHUB_ISSUE
-    default_level = Level.ASK
-    floor = Level.PREAPPROVED
     description = (
         "Open an issue in a configured repository. Fields: repository (required), title "
         "(required), body, labels (a list of existing label names)."
@@ -779,8 +770,6 @@ class IssueHandler(_GitHubHandler):
 
 class IssueCommentHandler(_GitHubHandler):
     kind = KIND_GITHUB_ISSUE_COMMENT
-    default_level = Level.ASK
-    floor = Level.PREAPPROVED
     description = (
         "Comment on an issue or pull request in a configured repository. Fields: repository "
         "(required), number (the issue or pull request number, required), body (required)."

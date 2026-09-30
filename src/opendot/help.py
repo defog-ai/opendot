@@ -8,7 +8,7 @@ from __future__ import annotations
 
 DESCRIPTION = (
     "OpenDot: a self-hosted assistant that takes ongoing work, runs each model step "
-    "in a locked-down container, and asks before it acts."
+    "in a locked-down container, and carries out the actions it proposes."
 )
 
 COMMANDS: dict[str, str] = {
@@ -23,16 +23,13 @@ COMMANDS: dict[str, str] = {
     "run-once": "move the oldest queued task forward by one step",
     "tick": "one full pass: schedules, wake-ups, channels, tasks and delivery",
     "status": "show task counts and the latest tasks with their answers",
-    "queue": "show unfinished tasks and pending approvals",
+    "queue": "show unfinished tasks",
     "show": "show everything recorded for one task",
-    "approve": "grant an approval request",
-    "deny": "deny an approval request",
     "retry": "queue a failed, stopped or skipped task again",
     "skip": "mark an unfinished task as skipped",
     "stop": "stop a task now",
     "notes": "list, add, edit or remove saved notes",
     "schedules": "list, add, pause, resume or end schedules",
-    "rules": "list, add, approve or remove permission rules",
     "install-cron": "add (or remove) a crontab entry that runs `opendot tick`",
     "github": "repositories, task copies and what the host published on GitHub",
     "browser": "check the built-in browser",
@@ -47,9 +44,9 @@ Getting started without any model login (scripted fake backend):
   opendot --config ./opendot.toml status
 
 With real backends:
-  opendot init                 # Codex worker, Claude Code reviewer
+  opendot init                 # Codex does the work
   opendot build-image
-  codex login                  # and/or: opendot login claude
+  codex login                  # or, with --worker claude_code: opendot login claude
   opendot doctor
   opendot task "..."
   opendot tick                 # or: opendot install-cron

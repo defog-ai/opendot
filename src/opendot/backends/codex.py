@@ -223,7 +223,7 @@ class CodexBackend:
             name=name,
             command=[*APP_SERVER_COMMAND, *mcp_args],
             session=session,
-            work_writable=step is not Step.REVIEW,
+            work_writable=True,
             mounts=mounts,
             env_names=sorted(env),
             fixed_env={**plan_env, "CODEX_HOME": CONTAINER_CLI_HOME},

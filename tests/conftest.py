@@ -1,7 +1,7 @@
 """Shared test fakes. Nothing here needs Docker, Slack, a model login or the network.
 
-Fixtures: clock, state_root, config, store, fake_backend, fake_reviewer,
-fake_docker, fake_channel, http_mock. The classes can also be imported directly:
+Fixtures: clock, state_root, config, store, fake_backend, fake_docker,
+fake_channel, http_mock. The classes can also be imported directly:
     from conftest import FakeChannel, FakeDocker, FakeProcess, FrozenClock, HttpMock
 """
 
@@ -349,7 +349,7 @@ def config(state_root: Path) -> Config:
     cfg = Config.from_dict(
         {
             "core": {"state_root": str(state_root)},
-            "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+            "backend": {"worker": {"kind": "fake"}},
         },
         env={},
     )
@@ -368,12 +368,6 @@ def store(config: Config, clock: FrozenClock) -> Iterator[Store]:
 @pytest.fixture
 def fake_backend() -> FakeBackend:
     """Worker backend. Script it with push(Step.WORK, {...}); inspect .calls."""
-    return FakeBackend()
-
-
-@pytest.fixture
-def fake_reviewer() -> FakeBackend:
-    """A second, independent FakeBackend for the review step."""
     return FakeBackend()
 
 

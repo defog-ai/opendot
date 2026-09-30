@@ -7,7 +7,7 @@ decides what happens next.
 Registry: each backend kind maps to "module:ClassName". The class must provide
     @classmethod
     def from_config(cls, config: Config, role: str, runner: CommandRunner | None = None) -> Backend
-where role is "worker" or "reviewer". Modules load only when create_backend asks for them.
+where role is "worker". Modules load only when create_backend asks for them.
 """
 
 from __future__ import annotations
@@ -76,10 +76,10 @@ class Backend(Protocol):
     ) -> StepResult:
         """Run one step and return its output.
 
-        step: which step (work / review / reflect); selects the prompt file and schema.
+        step: which step (work / reflect); selects the prompt file and schema.
         prompt: the full prompt text, already assembled by the host.
         output_schema: JSON schema the output must follow; pass it to the CLI.
-        env: variables for the container. Review steps always get an empty mapping.
+        env: variables for the container.
         mounts: extra bind mounts for the container.
         resume_id: a thread_id from an earlier StepResult; continue that session.
         limits: time and turn limits for this step.
@@ -212,7 +212,7 @@ def register_backend(kind: str, factory: str | BackendFactory) -> None:
 
 
 def create_backend(config: Config, role: str, runner: CommandRunner | None = None) -> Backend:
-    """Build the backend configured for role ("worker" or "reviewer")."""
+    """Build the backend configured for role ("worker")."""
     kind = config.backend_choice(role).kind
     try:
         entry = _BACKENDS[kind]

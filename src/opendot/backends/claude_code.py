@@ -6,7 +6,7 @@ structured output is read from the final "result" line of the stream.
 
 Permissions: --permission-mode dontAsk refuses every tool that is not listed in
 --allowedTools, so the CLI never waits for an answer. Work steps may use the
-shell and file tools inside the container. Review and reflect steps get no
+shell and file tools inside the container. Reflect steps get no
 tools at all (--tools "").
 
 Sessions: a new step picks its session id up front with --session-id, so its
@@ -237,7 +237,7 @@ class ClaudeCodeBackend:
                 mcp_servers=mcp_servers,
             ),
             session=session,
-            work_writable=step is not Step.REVIEW,
+            work_writable=True,
             mounts=mounts,
             env_names=sorted([*env, token_variable]),
             fixed_env={**plan_env, "CLAUDE_CONFIG_DIR": CONTAINER_CLI_HOME},

@@ -9,9 +9,9 @@ Each step runs in a fresh container started with `docker run --rm`. The containe
 - uses the Docker network named in the config ("host" and "container:..." are refused);
 - never gets the Docker socket, the state root or the host's login files as mounts.
 
-Two host folders per backend session are mounted: `work/` at /work (read-only in
-review steps) and `cli/` at /opendot/cli, where the CLI keeps its session files so
-a later step can resume the same session. They live under
+Two host folders per backend session are mounted: `work/` at /work and `cli/` at
+/opendot/cli, where the CLI keeps its session files so a later step can resume
+the same session. They live under
 state_root/sessions/<backend kind>/<session id>/.
 
 Work steps may also get host mounts (v0.2): folders the host made under the
@@ -111,12 +111,10 @@ def allowlisted_env(config: Config, source: Mapping[str, str] | None = None) -> 
 def check_step_env(step: Step, env: Mapping[str, str], config: Config) -> dict[str, str]:
     """Validate the variables a caller wants in a step container and return a copy.
 
-    Review steps get none. Every name must be in sandbox.env_allowlist and must not
-    be a reserved name or a host variable that holds a login (Config.secret_env_names).
+    Every name must be in sandbox.env_allowlist and must not be a reserved name or
+    a host variable that holds a login (Config.secret_env_names).
     """
     env = dict(env)
-    if Step(step) is Step.REVIEW and env:
-        raise SandboxError("review steps run without environment variables")
     allowed = set(config.sandbox.env_allowlist)
     host_secrets = config.secret_env_names()
     for name in env:
@@ -157,14 +155,12 @@ def _socket_paths() -> list[Path]:
 def check_mounts(step: Step, mounts: Sequence[Mount], config: Config) -> list[Mount]:
     """Validate extra mounts for a step and return them. Raises SandboxError.
 
-    Refused: any mount in a review step; the Docker socket or a folder that holds
-    it; the state root, anything inside it or above it; the Codex login file or a
-    folder above it; container paths that are relative, contain "..", or touch the
-    paths the sandbox manages; paths with characters that break `--mount`.
+    Refused: the Docker socket or a folder that holds it; the state root, anything
+    inside it or above it; the Codex login file or a folder above it; container
+    paths that are relative, contain "..", or touch the paths the sandbox manages;
+    paths with characters that break `--mount`.
     """
     mounts = list(mounts)
-    if Step(step) is Step.REVIEW and mounts:
-        raise SandboxError("review steps run without extra mounts")
     state_root = config.state_root.expanduser().resolve()
     auth_file = config.codex.auth_file.expanduser().resolve()
     seen: set[str] = set()

@@ -6,8 +6,8 @@ field plus fields for that kind. The host looks the kind up in this registry:
 - an unknown kind is refused (UnknownAction); the host has no code to run it;
 - the handler, not the model, builds the target (for example the requester's own
   thread) and the payload that will be sent;
-- the handler declares whether the action is outward and its fixed floor level,
-  which user rules cannot relax.
+- the handler declares whether the action is outward (it reaches someone other
+  than OpenDot's own records).
 
 Built-in handlers live in the modules listed in BUILTIN_ACTION_MODULES. Each of
 those modules exposes a module-level list ACTION_HANDLERS.
@@ -28,7 +28,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from opendot.models import Level, Schedule, Task
+from opendot.models import Schedule, Task
 
 if TYPE_CHECKING:
     from opendot.channels import Channel
@@ -67,8 +67,7 @@ KIND_NOTIFY = "notify.post"  # post a schedule result to the schedule's stored d
 KIND_NOTE_WRITE = "note.write"  # add, edit or delete a note in the requester's profile
 KIND_SCHEDULE_CREATE = "schedule.create"  # save a new schedule
 
-# v0.2 GitHub kinds. Push and pull request always ask (fixed floor); issues and
-# comments ask by default.
+# v0.2 GitHub kinds.
 KIND_GITHUB_PUSH_BRANCH = "github.push_branch"  # push the task's copy to a new branch
 KIND_GITHUB_OPEN_PR = "github.open_pr"  # push and open a pull request
 KIND_GITHUB_ISSUE = "github.issue"  # open an issue
@@ -122,7 +121,7 @@ def payload_digest(kind: str, target: str, payload: Mapping[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class PreparedAction:
-    """An action exactly as the host would run it. Approvals bind to its digest."""
+    """An action exactly as the host will run it."""
 
     kind: str
     target: str  # host-built, e.g. "slack:C0123:1700000000.000100" or "note:<profile>"
@@ -155,25 +154,20 @@ class ActionContext:
 class ActionHandler(Protocol):
     """One kind of action the host can run.
 
-    Two optional members are read with getattr, so a handler may leave them out:
-    - description: str, the text the agent sees for this kind in its instructions
-      (the class docstring is used when it is missing);
-    - default_level_for(action: PreparedAction, ctx: ActionContext) -> Level, a
-      per-action default used instead of default_level when no rule matches. The
-      floor still applies to what it returns.
+    One optional member is read with getattr, so a handler may leave it out:
+    description: str, the text the agent sees for this kind in its instructions
+    (the class docstring is used when it is missing).
     """
 
     kind: str
     outward: bool
-    default_level: Level  # used when no user rule matches
-    floor: Level  # the least strict level any rule may give this kind
 
     def prepare(self, proposal: Mapping[str, Any], ctx: ActionContext) -> PreparedAction:
         """Build the exact action from the proposal. Raise InvalidProposal on bad fields."""
         ...
 
     def execute(self, action: PreparedAction, ctx: ActionContext) -> ActionResult:
-        """Carry out a prepared action. Called only after rules, review and approval."""
+        """Carry out a prepared action. Called right after prepare() succeeds."""
         ...
 
 
@@ -186,8 +180,6 @@ class ActionRegistry:
     def register(self, handler: ActionHandler) -> None:
         if handler.kind in self._handlers:
             raise ValueError(f"action kind {handler.kind!r} is already registered")
-        if Level(handler.default_level).rank < Level(handler.floor).rank:
-            raise ValueError(f"{handler.kind}: default_level is less strict than floor")
         self._handlers[handler.kind] = handler
 
     def kinds(self) -> list[str]:

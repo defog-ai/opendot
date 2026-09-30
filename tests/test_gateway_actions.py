@@ -7,7 +7,7 @@ import pytest
 from opendot.actions import ActionContext, InvalidProposal, build_registry
 from opendot.config import Config
 from opendot.gateway.actions import McpWriteHandler, action_handlers
-from opendot.models import GatewayCallStatus, GatewayMode, Level
+from opendot.models import GatewayCallStatus, GatewayMode
 from opendot.store import open_store
 from test_gateway_server import failing_factory, fake_factory
 from test_gateway_step import connector_config
@@ -30,13 +30,12 @@ def test_registry_gets_one_handler_per_write_tool(setup):
     assert "mcp.fake.search" not in registry
     [handler] = action_handlers(config)
     assert handler.outward is True
-    assert handler.floor is Level.ASK and handler.default_level is Level.ASK
 
 
 def test_factiq_feedback_is_an_action_only_when_turned_on(state_root):
     base = {
         "core": {"state_root": str(state_root)},
-        "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+        "backend": {"worker": {"kind": "fake"}},
     }
     off = Config.from_dict({**base, "factiq": {"enabled": True}}, env={})
     assert action_handlers(off) == []
@@ -113,7 +112,7 @@ def test_execute_without_the_api_key_fails_closed(state_root):
     config = Config.from_dict(
         {
             "core": {"state_root": str(state_root)},
-            "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+            "backend": {"worker": {"kind": "fake"}},
             "factiq": {"enabled": True, "feedback": True, "api_key_env": "OPENDOT_TEST_NO_KEY"},
         },
         env={},

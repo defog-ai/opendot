@@ -9,8 +9,7 @@ there, so the model cannot commit, push or change remotes. The host:
 - commits the model's edits, runs the repository's checks in a sandbox
   container and records the tree hash, the change list and the check results in
   the action's payload (github.actions);
-- pushes and calls the GitHub REST API only when the action runs, after rules,
-  review and approval.
+- pushes and calls the GitHub REST API only when the action runs.
 
 Modules:
 - git: host git commands with hooks, fsmonitor, host config and submodules off.

@@ -7,7 +7,6 @@ Script format (a JSON file, or the same structure passed in code):
                    {"error": "the CLI crashed"},
                    {"interrupt": true},
                    {"timeout": true} ],
-      "review":  [ ... ],
       "reflect": [ ... ]
     }
 

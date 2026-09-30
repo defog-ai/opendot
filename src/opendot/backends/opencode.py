@@ -11,7 +11,7 @@ step_finish parts, and an error event when the provider call fails. Every event
 carries the session id.
 
 Permissions: opencode reads its settings from OPENCODE_CONFIG_CONTENT. Work steps
-allow every tool inside the container; review and reflect steps deny every tool.
+allow every tool inside the container; reflect steps deny every tool.
 Sharing and self-update are turned off, and --pure skips external plugins.
 
 MCP servers (work steps only) go in the same settings under "mcp". opencode names
@@ -355,7 +355,7 @@ class OpencodeBackend:
             name=name,
             command=opencode_args(self.model, resume_id),
             session=session,
-            work_writable=step is not Step.REVIEW,
+            work_writable=True,
             mounts=mounts,
             env_names=sorted(env),
             fixed_env={

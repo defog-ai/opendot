@@ -44,7 +44,7 @@ def make_config(
 ) -> Config:
     data: dict[str, Any] = {
         "core": {"state_root": str(tmp_path / "state")},
-        "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+        "backend": {"worker": {"kind": "fake"}},
         "sandbox": sandbox,
     }
     if browser_section is not None:
@@ -119,10 +119,10 @@ def test_enabled_browser_adds_server_mount_and_shared_memory(tmp_path: Path) -> 
     extensions.finish(ctx, plan, None)
 
 
-def test_review_steps_get_no_browser(tmp_path: Path) -> None:
+def test_reflect_steps_get_no_browser(tmp_path: Path) -> None:
     cfg = make_config(tmp_path, {"enabled": True})
     assert (
-        StepExtensions(browser.step_extensions(cfg)).begin(context(cfg, step=Step.REVIEW)) is None
+        StepExtensions(browser.step_extensions(cfg)).begin(context(cfg, step=Step.REFLECT)) is None
     )
 
 

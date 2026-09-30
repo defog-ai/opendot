@@ -6,8 +6,7 @@ current time, the action kinds it can run, and the requester's material.
 
 Requester material is always placed inside <untrusted source="..."> blocks, one
 JSON object per line, with "<" and ">" escaped so that no text can close the
-block early. The review prompt is assembled by opendot.reviewer from the same
-policy file.
+block early.
 """
 
 from __future__ import annotations

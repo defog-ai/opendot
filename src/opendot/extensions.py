@@ -19,9 +19,9 @@ The orchestrator uses StepExtensions around each work step:
     finally:
         self.extensions.finish(ctx, plan, attempt)
 
-Review and reflect steps get no plan. Extensions only change the StepPlan; they
-never start the model, and they never send anything outward. Outward work is an
-action (opendot.actions) and goes through rules, review and approval.
+Reflect steps get no plan. Extensions only change the StepPlan; they never
+start the model, and they never send anything outward. Outward work is an
+action (opendot.actions), which the host prepares and runs.
 """
 
 from __future__ import annotations

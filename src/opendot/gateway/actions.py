@@ -1,9 +1,8 @@
 """Connector write tools as actions: mcp.<server>.<tool>.
 
 A tool marked mode = "write" is never callable through the gateway. The model
-proposes it as an action instead, and it runs only after rules, the reviewer and
-the person's approval, like any other outward action. Its floor and default level
-are both "ask", so no rule can make it run without asking.
+proposes it as an action instead, and the host runs it like any other outward
+action, so each call is recorded as an action of the task.
 
 Fields: the tool's arguments, as the action's fields. A proposal that has only
 the field "arguments" (an object) uses that object as the arguments.
@@ -19,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from opendot.actions import ActionContext, ActionResult, InvalidProposal, PreparedAction, mcp_kind
-from opendot.models import GatewayCallStatus, GatewayMode, Level
+from opendot.models import GatewayCallStatus, GatewayMode
 
 if TYPE_CHECKING:
     from opendot.config import Config, McpServerConfig
@@ -36,11 +35,9 @@ def _destination(server: McpServerConfig) -> str:
 
 
 class McpWriteHandler:
-    """One connector write tool, run by the host after approval."""
+    """One connector write tool, run by the host."""
 
     outward = True
-    default_level = Level.ASK
-    floor = Level.ASK
 
     def __init__(
         self,

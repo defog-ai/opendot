@@ -7,14 +7,11 @@ import pytest
 
 import opendot.actions as actions
 from opendot.actions import build_registry, default_registry, mcp_kind, parse_mcp_kind
-from opendot.models import Level
 
 
 class _Handler:
     kind = "github.push_branch"
     outward = True
-    default_level = Level.ASK
-    floor = Level.ASK
 
     def prepare(self, proposal, ctx):
         raise NotImplementedError

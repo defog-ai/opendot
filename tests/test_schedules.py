@@ -5,16 +5,13 @@ from datetime import UTC, datetime
 import pytest
 
 from opendot.actions import ActionContext, ActionRegistry, InvalidProposal
-from opendot.approvals import consume_approval, decide, request_approval
 from opendot.models import (
     Destination,
-    Level,
     NotifyRule,
     ScheduleStatus,
     TaskSource,
     TaskState,
 )
-from opendot.rules import RuleEngine
 from opendot.schedules import (
     ScheduleCreateHandler,
     ScheduleError,
@@ -187,24 +184,6 @@ def test_paused_schedule_does_not_run_and_resumes_from_now(store, clock):
     assert resumed.next_run_at == utc(2026, 1, 10, 9)
 
 
-def test_scheduled_run_does_not_inherit_approvals(store, config, clock):
-    registry = ActionRegistry([ScheduleCreateHandler()])
-    creator_task = store.create_task(
-        requester="alice", text="x", channel="slack", conversation="C1", thread="100.1"
-    )
-    ctx = ActionContext(task=creator_task, store=store, config=config, channels={})
-    prepared = registry.prepare(
-        {"kind": "schedule.create", "what": "w", "cadence": "0 9 * * *"}, ctx
-    )
-    approval = request_approval(store, creator_task, prepared)
-    decide(store, config, approval.id, granted=True, decided_by="alice", channel="slack")
-    make(store)
-    clock.set(utc(2026, 1, 6, 9))
-    [run] = run_due_schedules(store)
-    assert store.list_approvals(run.id) == []
-    assert consume_approval(store, run, prepared) is None
-
-
 # -- notify rule ------------------------------------------------------------
 
 
@@ -234,7 +213,7 @@ def slack_task(store):
     )
 
 
-def test_schedule_create_needs_approval_and_targets_the_own_thread(store, config, slack_task):
+def test_schedule_create_targets_the_own_thread(store, config, slack_task):
     registry = ActionRegistry([ScheduleCreateHandler()])
     ctx = ActionContext(task=slack_task, store=store, config=config, channels={})
     prepared = registry.prepare(
@@ -251,7 +230,6 @@ def test_schedule_create_needs_approval_and_targets_the_own_thread(store, config
     assert prepared.outward
     assert prepared.target == "schedule:slack:C1:100.1"
     assert prepared.payload["destination"]["conversation"] == "C1"
-    assert RuleEngine(registry, []).decide(prepared, ctx).level is Level.ASK
 
     result = registry.execute(prepared, ctx)
     assert result.ok
@@ -303,18 +281,6 @@ def test_schedule_create_rejects_bad_proposals(store, config, slack_task, propos
     ctx = ActionContext(task=slack_task, store=store, config=config, channels={})
     with pytest.raises(InvalidProposal):
         registry.prepare(proposal, ctx)
-
-
-def test_rule_cannot_relax_schedule_create(store, config, slack_task):
-    from opendot.models import RuleSource
-
-    store.add_rule("schedule.create", Level.ALLOW, source=RuleSource.OPERATOR, created_by="op")
-    registry = ActionRegistry([ScheduleCreateHandler()])
-    ctx = ActionContext(task=slack_task, store=store, config=config, channels={})
-    prepared = registry.prepare(
-        {"kind": "schedule.create", "what": "w", "cadence": "0 9 * * *"}, ctx
-    )
-    assert RuleEngine.from_store(registry, store).decide(prepared, ctx).level is Level.ASK
 
 
 def test_execute_refuses_a_destination_other_than_the_task_thread(store, config, slack_task):

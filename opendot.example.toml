@@ -22,32 +22,18 @@ lease_minutes = 60
 task_minutes = 120
 # Wall-clock limit for one model step, in minutes.
 step_minutes = 30
-# Most model steps (work, review, reflect) one task may run.
+# Most model steps (work, reflect) one task may run.
 max_steps_per_task = 20
 # Most model turns one task may use, when the backend reports turns.
 max_turns_per_task = 200
 # Most tokens one task may use, when the backend reports tokens.
 max_tokens_per_task = 0
 
-[reviewer]
-# Stop the task after this many reviewer denials in a row.
-denials_in_a_row = 3
-# Number of recent reviews to look at for the next limit.
-denial_window = 50
-# Stop the task after this many denials within the window.
-denials_in_window = 10
-
 [backend.worker]
 # Backend for the work and reflect steps: "codex", "claude_code", "opencode" or "fake".
 kind = "codex"
 # Model name passed to the CLI. Empty means the CLI's own default. The opencode
 # backend needs "provider/model", as listed by `opencode models`.
-model = ""
-
-[backend.reviewer]
-# Backend for the review step. A different vendor from the worker is recommended.
-kind = "claude_code"
-# Model name passed to the CLI. Empty means the CLI's own default.
 model = ""
 
 [backend.codex]
@@ -90,7 +76,7 @@ pids_limit = 512
 tmp_size = "1g"
 # Size of the writable home folder inside the container.
 home_size = "512m"
-# Names of host variables passed into work steps. Empty by default; review steps never get any.
+# Names of host variables passed into work steps. Empty by default.
 # The Slack token variable and the Claude Code login variable are refused.
 env_allowlist = []
 # Host folders mounted read-only into work steps, for example
@@ -118,18 +104,10 @@ channels = []
 # Slack user ids allowed to give work. An empty list allows nobody.
 allowed_users = []
 
-# Your own permission rules. Each rule sets the level for one action kind, and
-# optionally one target. Levels: "allow", "preapproved", "ask", "hand_off".
-# A rule can make a kind stricter than its fixed floor, never looser.
-# [[rules]]
-# kind = "note.write"
-# target = "*"
-# level = "ask"
-
 # ---------------------------------------------------------------------------
 # Pull requests (v0.2). The host keeps the GitHub token. The model edits a copy
 # of the repository; the host runs the checks, commits, pushes and opens the
-# pull request only after the action is approved.
+# pull request when the model proposes it.
 # ---------------------------------------------------------------------------
 
 [github]
@@ -160,12 +138,12 @@ forbidden_files = [".env", ".netrc", ".npmrc", ".pypirc", "*.pem", "*.key", "*.p
 max_file_kib = 512
 # Wall-clock limit for one repository's checks, in minutes.
 check_minutes = 15
-# Longest diff the approver is shown, in characters. A longer change is refused,
-# never cut, so the approver always sees all of it.
+# Longest diff the host will push, in characters. A longer change is refused,
+# never cut, so the task log always holds all of it.
 max_diff_chars = 20000
-# Binary files cannot be read by the approver. By default a push that adds or
-# changes one is refused for a public repository. true allows it; the approver
-# then sees only the file's name and size.
+# The public text check cannot read binary files. By default a push that adds or
+# changes one is refused for a public repository. true allows it; the task log
+# then records only the file's name and size.
 allow_binary_public = false
 
 # Repositories the model may work on. One table per repository.
@@ -211,7 +189,7 @@ tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "brows
 # ---------------------------------------------------------------------------
 # MCP connectors (v0.2). The host connects to each server and keeps its login.
 # The model sees only tools marked "read". Tools marked "write" become actions
-# named mcp.<server>.<tool>, which ask for approval by default.
+# named mcp.<server>.<tool>, which the host runs when the model proposes one.
 # ---------------------------------------------------------------------------
 
 [gateway]
@@ -246,5 +224,5 @@ auth = "bearer_env"
 api_key_env = "FACTIQ_API_KEY"
 # Show the model the public FactIQ plugin skill files (MIT licence), read-only.
 instructions = true
-# Allow send_feedback, as an action that asks for approval first.
+# Allow send_feedback, as an action the model can propose.
 feedback = false

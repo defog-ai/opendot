@@ -10,7 +10,7 @@ from opendot.actions import ActionRegistry, InvalidProposal, PreparedAction, Unk
 from opendot.backends import BackendError, StepInterrupted, StepTimedOut, create_backend
 from opendot.backends.fake import FakeBackend
 from opendot.config import DEFAULTS, ENV_OVERRIDES, Config, ConfigError
-from opendot.models import Level, Step
+from opendot.models import Step
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "opendot.example.toml"
 
@@ -19,12 +19,11 @@ def test_defaults():
     cfg = Config.from_dict({}, env={})
     assert cfg.core.timezone == "UTC"
     assert cfg.worker_backend.kind == "codex"
-    assert cfg.reviewer_backend.kind == "claude_code"
     assert cfg.sandbox.network == "bridge"
     assert cfg.slack.enabled is False
     assert cfg.slack.allowed_users == []
     assert cfg.fake.script is None
-    assert cfg.rules == []
+    assert cfg.ignored_keys == []
     assert cfg.db_path == cfg.state_root / "opendot.db"
 
 
@@ -89,10 +88,7 @@ def test_bad_env_value():
         {"backend": {"worker": {"kind": "nope"}}},
         {"sandbox": {"readonly_mounts": [{"host": "/a", "container": "relative"}]}},
         {"sandbox": {"readonly_mounts": [{"host": "/a"}]}},
-        {"rules": [{"kind": "note.write", "level": "refuse"}]},
-        {"rules": [{"kind": "note.write"}]},
         {"limits": {"task_minutes": -1}},
-        {"reviewer": {"denials_in_a_row": 0}},
     ],
 )
 def test_invalid_config_is_refused(data):
@@ -105,16 +101,11 @@ def test_host_network_refused_from_env_too():
         Config.from_dict({}, env={"OPENDOT_SANDBOX_NETWORK": "host"})
 
 
-def test_rules_and_mounts_parse():
+def test_mounts_parse():
     cfg = Config.from_dict(
-        {
-            "rules": [{"kind": "note.write", "level": "ask"}],
-            "sandbox": {"readonly_mounts": [{"host": "/srv/ref", "container": "/evidence/ref"}]},
-        },
+        {"sandbox": {"readonly_mounts": [{"host": "/srv/ref", "container": "/evidence/ref"}]}},
         env={},
     )
-    assert cfg.rules[0].target == "*"
-    assert cfg.rules[0].level is Level.ASK
     assert cfg.sandbox.readonly_mounts[0].host == Path("/srv/ref")
 
 
@@ -150,11 +141,29 @@ def test_config_fixture(config, state_root):
     assert config.backend_choice("worker").kind == "fake"
     with pytest.raises(ValueError):
         config.backend_choice("judge")
+    with pytest.raises(ValueError):
+        config.backend_choice("reviewer")
+
+
+def test_config_from_before_0_3_still_loads():
+    old = {
+        "reviewer": {"denials_in_a_row": 3, "denial_window": 50, "denials_in_window": 10},
+        "backend": {
+            "worker": {"kind": "fake"},
+            "reviewer": {"kind": "claude_code", "model": ""},
+        },
+        "rules": [{"kind": "note.write", "level": "ask"}],
+    }
+    cfg = Config.from_dict(old, env={})
+    assert cfg.worker_backend.kind == "fake"
+    assert cfg.ignored_keys == ["reviewer", "backend.reviewer", "rules"]
+    # The caller's data is not changed.
+    assert "reviewer" in old["backend"] and "rules" in old
 
 
 def test_example_file_matches_defaults():
     data = tomllib.loads(EXAMPLE.read_text(encoding="utf-8"))
-    table_lists = {"rules", "repositories", "mcp_servers"}
+    table_lists = {"repositories", "mcp_servers"}
     assert data == {k: v for k, v in DEFAULTS.items() if k not in table_lists}
     loaded = Config.load(EXAMPLE, env={})
     assert loaded == replace(Config.from_dict({}, env={}), source_path=EXAMPLE)
@@ -196,8 +205,8 @@ def test_fake_backend_scripted_outcomes(fake_backend):
     fake_backend.push(Step.WORK, {"a": 1}, thread_id="t-9")
     fake_backend.push_error(Step.WORK, "crashed")
     fake_backend.push_interrupt(Step.WORK)
-    fake_backend.push_timeout(Step.REVIEW)
-    fake_backend.push(Step.REVIEW, {"verdict": "approve"})
+    fake_backend.push_timeout(Step.REFLECT)
+    fake_backend.push(Step.REFLECT, {"notes": []})
     assert fake_backend.run_step(Step.WORK, "p", {}, {}, []).thread_id == "t-9"
     with pytest.raises(BackendError, match="crashed"):
         fake_backend.run_step(Step.WORK, "p", {}, {}, [])
@@ -206,19 +215,17 @@ def test_fake_backend_scripted_outcomes(fake_backend):
     with pytest.raises(BackendError):
         fake_backend.run_step(Step.WORK, "p", {}, {}, [])
     with pytest.raises(StepTimedOut):
-        fake_backend.run_step(Step.REVIEW, "p", {}, {}, [])
+        fake_backend.run_step(Step.REFLECT, "p", {}, {}, [])
     with pytest.raises(StepInterrupted):
-        fake_backend.run_step(Step.REVIEW, "p", {}, {}, [], should_stop=lambda: True)
-    assert fake_backend.remaining(Step.REVIEW) == 1
-    assert fake_backend.run_step(Step.REVIEW, "p", {}, {}, [], "resume-1").thread_id == "resume-1"
+        fake_backend.run_step(Step.REFLECT, "p", {}, {}, [], should_stop=lambda: True)
+    assert fake_backend.remaining(Step.REFLECT) == 1
+    assert fake_backend.run_step(Step.REFLECT, "p", {}, {}, [], "resume-1").thread_id == "resume-1"
     assert len(fake_backend.calls_for(Step.WORK)) == 4
 
 
 class _EchoHandler:
     kind = "reply.post"
     outward = True
-    default_level = Level.ALLOW
-    floor = Level.ALLOW
 
     def __init__(self, returned_kind="reply.post"):
         self.returned_kind = returned_kind
@@ -245,13 +252,7 @@ def test_registry_refuses_unknown_kinds():
         registry.register(_EchoHandler())
 
 
-def test_registry_rejects_kind_swap_and_loose_default():
+def test_registry_rejects_kind_swap():
     registry = ActionRegistry([_EchoHandler(returned_kind="notify.post")])
     with pytest.raises(InvalidProposal):
         registry.prepare({"kind": "reply.post", "text": "hi"}, ctx=None)
-
-    loose = _EchoHandler()
-    loose.kind = "note.write"
-    loose.floor = Level.ASK
-    with pytest.raises(ValueError):
-        ActionRegistry([loose])

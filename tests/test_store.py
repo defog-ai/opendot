@@ -6,17 +6,11 @@ from datetime import timedelta
 import pytest
 
 from opendot.models import (
-    ApprovalMode,
-    ApprovalStatus,
     AttemptStatus,
     Destination,
     IncomingMessage,
-    Level,
     MessageKind,
     NoteSource,
-    ReviewVerdict,
-    RuleSource,
-    RuleStatus,
     ScheduleStatus,
     Step,
     TaskState,
@@ -27,7 +21,6 @@ from opendot.store import (
     LockBusy,
     NotFound,
     Store,
-    StoreError,
     WorkerLock,
 )
 
@@ -168,7 +161,7 @@ def test_find_thread_task(store):
 def test_attempts_are_numbered_per_task(store):
     task = make_task(store)
     first = store.start_attempt(task.id, Step.WORK, "fake")
-    second = store.start_attempt(task.id, Step.REVIEW, "fake")
+    second = store.start_attempt(task.id, Step.REFLECT, "fake")
     assert (first.attempt_number, second.attempt_number) == (1, 2)
     done = store.finish_attempt(
         first.id,
@@ -180,7 +173,7 @@ def test_attempts_are_numbered_per_task(store):
     assert done.output == {"summary": "x"}
     assert done.usage == {"turns": 2}
     assert done.backend_thread_id == "th"
-    assert [a.step for a in store.list_attempts(task.id)] == [Step.WORK, Step.REVIEW]
+    assert [a.step for a in store.list_attempts(task.id)] == [Step.WORK, Step.REFLECT]
 
 
 def _incoming(external_id="local:1", text="hello"):
@@ -252,122 +245,11 @@ def test_actions(store):
         target="cli:local:1",
         payload={"text": "hi"},
         payload_digest="d1",
-        level=Level.ALLOW,
     )
     assert action.payload == {"text": "hi"}
     updated = store.set_action_status(action.id, "executed", result={"id": "x"})
     assert updated.result == {"id": "x"}
     assert [a.id for a in store.list_actions(task.id, status="executed")] == [action.id]
-
-
-def test_single_use_approval_needs_digest_and_is_used_once(store):
-    task = make_task(store)
-    with pytest.raises(ValueError):
-        store.create_approval(
-            task.id,
-            kind="note.write",
-            target="t",
-            mode=ApprovalMode.SINGLE_USE,
-            payload_digest=None,
-        )
-    with pytest.raises(sqlite3.IntegrityError):
-        # The table enforces the same rule.
-        with store.transaction() as conn:
-            conn.execute(
-                "INSERT INTO approvals (task_id, kind, target, mode, status, requested_at) "
-                "VALUES (?, 'k', 't', 'single_use', 'pending', 'x')",
-                (task.id,),
-            )
-    approval = store.create_approval(
-        task.id, kind="note.write", target="t", mode=ApprovalMode.SINGLE_USE, payload_digest="abc"
-    )
-    assert approval.status is ApprovalStatus.PENDING
-    assert store.granted_approvals(task.id, "note.write", "t") == []
-    granted = store.decide_approval(approval.id, granted=True, decided_by="alice")
-    assert granted.status is ApprovalStatus.GRANTED
-    assert granted.decided_by == "alice"
-    with pytest.raises(StoreError):
-        store.decide_approval(approval.id, granted=False, decided_by="alice")
-    assert [a.id for a in store.granted_approvals(task.id, "note.write", "t")] == [approval.id]
-    used = store.mark_approval_used(approval.id)
-    assert used.status is ApprovalStatus.USED
-    assert store.granted_approvals(task.id, "note.write", "t") == []
-    with pytest.raises(StoreError):
-        store.mark_approval_used(approval.id)
-
-
-def test_until_task_end_approval_stays_granted(store):
-    task = make_task(store)
-    approval = store.create_approval(
-        task.id,
-        kind="notify.post",
-        target="t",
-        mode=ApprovalMode.UNTIL_TASK_END,
-        payload_digest=None,
-    )
-    store.decide_approval(approval.id, granted=True, decided_by="alice")
-    used = store.mark_approval_used(approval.id)
-    assert used.status is ApprovalStatus.GRANTED
-    assert used.used_at is not None
-
-
-def test_approval_expiry(store, clock):
-    task = make_task(store)
-    approval = store.create_approval(
-        task.id,
-        kind="k",
-        target="t",
-        mode=ApprovalMode.SINGLE_USE,
-        payload_digest="abc",
-        expires_at=clock.now() + timedelta(minutes=10),
-    )
-    clock.advance(minutes=10)
-    assert store.expire_approvals() == 1
-    assert store.get_approval(approval.id).status is ApprovalStatus.EXPIRED
-    with pytest.raises(StoreError):
-        store.decide_approval(approval.id, granted=True, decided_by="alice")
-
-
-def test_terminal_state_expires_open_approvals(store):
-    task = make_task(store)
-    pending = store.create_approval(
-        task.id, kind="k", target="t", mode=ApprovalMode.SINGLE_USE, payload_digest="a"
-    )
-    granted = store.create_approval(
-        task.id, kind="k", target="t", mode=ApprovalMode.UNTIL_TASK_END, payload_digest=None
-    )
-    denied = store.create_approval(
-        task.id, kind="k", target="t", mode=ApprovalMode.SINGLE_USE, payload_digest="b"
-    )
-    store.decide_approval(granted.id, granted=True, decided_by="alice")
-    store.decide_approval(denied.id, granted=False, decided_by="alice")
-    store.set_task_state(task.id, TaskState.STOPPED)
-    statuses = {a.id: a.status for a in store.list_approvals(task_id=task.id)}
-    assert statuses == {
-        pending.id: ApprovalStatus.EXPIRED,
-        granted.id: ApprovalStatus.EXPIRED,
-        denied.id: ApprovalStatus.DENIED,
-    }
-
-
-def test_rules(store):
-    agent = store.add_rule("note.write", Level.ALLOW, source=RuleSource.AGENT, created_by="task:1")
-    operator = store.add_rule(
-        "reply.post", Level.ASK, target="cli:local", source=RuleSource.OPERATOR, created_by="op"
-    )
-    assert agent.status is RuleStatus.PENDING
-    assert agent.approved_at is None
-    assert operator.status is RuleStatus.ACTIVE
-    assert [r.id for r in store.list_rules(RuleStatus.ACTIVE)] == [operator.id]
-    assert store.approve_rule(agent.id).status is RuleStatus.ACTIVE
-
-    synced = store.sync_config_rules([("schedule.create", "*", Level.ASK)])
-    assert [(r.kind, r.source) for r in synced] == [("schedule.create", RuleSource.CONFIG)]
-    synced = store.sync_config_rules([("note.*", "*", Level.HAND_OFF)])
-    assert [r.kind for r in synced] == ["note.*"]
-    assert len(store.list_rules()) == 3
-    assert store.remove_rule(operator.id)
-    assert not store.remove_rule(operator.id)
 
 
 def test_schedules(store, clock):
@@ -419,18 +301,6 @@ def test_notes_are_kept_per_profile(store):
     assert edited.subject == ""
     assert store.delete_note(a.id)
     assert store.list_notes("slack:alice") == []
-
-
-def test_denial_counts(store):
-    task = make_task(store)
-    for verdict in ["deny", "approve", "deny", "deny"]:
-        store.record_review(task.id, verdict, reason="r")
-    counts = store.denial_counts(task.id)
-    assert (counts.in_a_row, counts.in_window) == (2, 3)
-    assert store.denial_counts(task.id, window=2).in_window == 2
-    store.record_review(task.id, ReviewVerdict.ESCALATE_TO_USER)
-    assert store.denial_counts(task.id).in_a_row == 0
-    assert store.list_reviews(task.id)[0].verdict is ReviewVerdict.ESCALATE_TO_USER
 
 
 def test_events(store):

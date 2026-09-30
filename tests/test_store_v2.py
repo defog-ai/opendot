@@ -1,4 +1,4 @@
-"""Schema version 2: migration from a version 1 database and the new tables."""
+"""Schema versions 2 and 3: migration from older databases and the version 2 tables."""
 
 import os
 import sqlite3
@@ -9,46 +9,61 @@ from pathlib import Path
 import pytest
 
 from opendot.models import (
+    ActionStatus,
     GatewayCallStatus,
     GatewayMode,
     PublicationKind,
     PublicationState,
     RepoVisibility,
     Step,
+    TaskState,
     WorktreeStatus,
 )
-from opendot.store import SCHEMA_VERSION, NotFound, Store, StoreError
+from opendot.store import NO_APPROVALS_ERROR, SCHEMA_VERSION, NotFound, Store, StoreError
 
 
-def _v1_schema() -> str:
-    """The schema.sql shipped with v0.1, read from git history when available."""
+def _old_schema(commit: str, name: str) -> str:
+    """The schema.sql shipped with an older version, read from git history when available."""
     here = Path(__file__).resolve().parent.parent
     result = subprocess.run(
-        ["git", "show", "dd08de0:src/opendot/schema.sql"],
+        ["git", "show", f"{commit}:src/opendot/schema.sql"],
         cwd=here,
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
-        pytest.skip("v0.1 schema not available from git history")
+        pytest.skip(f"{name} schema not available from git history")
     return result.stdout
 
 
-def test_schema_version_is_two():
-    assert SCHEMA_VERSION == 2
+def _v1_schema() -> str:
+    return _old_schema("dd08de0", "v0.1")
+
+
+def _v2_schema() -> str:
+    return _old_schema("702003c", "v0.2")
+
+
+def _old_database(path, schema: str, version: int) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(schema)
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (str(version),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_schema_version_is_three():
+    assert SCHEMA_VERSION == 3
 
 
 def test_migrate_version_one_database_keeps_rows(tmp_path, clock):
     path = tmp_path / "old.db"
-    conn = sqlite3.connect(path)
-    conn.executescript(_v1_schema())
-    conn.execute(
-        "INSERT INTO meta (key, value) VALUES ('schema_version', '1') "
-        "ON CONFLICT (key) DO UPDATE SET value = excluded.value"
-    )
-    conn.commit()
-    conn.close()
+    _old_database(path, _v1_schema(), 1)
 
     store = Store(path, clock=clock)
     assert store.schema_version() == 1
@@ -56,7 +71,7 @@ def test_migrate_version_one_database_keeps_rows(tmp_path, clock):
         text="old task", requester="alice", channel="cli", conversation="local"
     )
     store.migrate()
-    assert store.schema_version() == 2
+    assert store.schema_version() == SCHEMA_VERSION
     assert store.get_task(task.id).text == "old task"
     names = {
         row["name"]
@@ -69,6 +84,53 @@ def test_migrate_version_one_database_keeps_rows(tmp_path, clock):
         "gateway_calls",
         "connector_tokens",
     } <= names
+    store.close()
+
+
+def test_migrate_version_two_database_ends_waiting_approvals(tmp_path, clock):
+    path = tmp_path / "v2.db"
+    _old_database(path, _v2_schema(), 2)
+    conn = sqlite3.connect(path)
+    now = "2026-01-05T09:00:00.000000Z"
+    for state in ("awaiting_approval", "done"):
+        conn.execute(
+            "INSERT INTO tasks (state, source, channel, conversation, requester, profile, "
+            "text, lease_owner, lease_expires_at, created_at, updated_at) "
+            "VALUES (?, 'cli', 'cli', 'local', 'alice', 'cli:alice', 't', 'w1', ?, ?, ?)",
+            (state, now, now, now),
+        )
+    for status in ("awaiting_approval", "executed"):
+        conn.execute(
+            "INSERT INTO actions (task_id, kind, target, payload, payload_digest, level, "
+            "status, created_at, updated_at) "
+            "VALUES (1, 'reply.post', 'cli:local', '{}', 'd', 'ask', ?, ?, ?)",
+            (status, now, now),
+        )
+    conn.execute(
+        "INSERT INTO approvals (task_id, kind, target, mode, status, payload_digest, "
+        "requested_at) VALUES (1, 'reply.post', 'cli:local', 'single_use', 'pending', 'd', ?)",
+        (now,),
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path, clock=clock)
+    store.migrate()
+    assert store.schema_version() == 3
+    waiting, finished = store.get_task(1), store.get_task(2)
+    assert waiting.state is TaskState.QUEUED
+    assert waiting.lease_owner is None
+    assert finished.state is TaskState.DONE
+    denied, executed = store.list_actions(1)
+    assert denied.status is ActionStatus.DENIED
+    assert denied.error == NO_APPROVALS_ERROR
+    assert executed.status is ActionStatus.EXECUTED
+    # The old approvals table is kept as a record.
+    [count] = store._conn.execute("SELECT count(*) FROM approvals").fetchone()
+    assert count == 1
+    # A second run changes nothing.
+    store.migrate()
+    assert store.get_task(1).state is TaskState.QUEUED
     store.close()
 
 

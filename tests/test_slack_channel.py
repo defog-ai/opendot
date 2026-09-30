@@ -21,7 +21,7 @@ def slack_config(state_root) -> Config:
     return Config.from_dict(
         {
             "core": {"state_root": str(state_root)},
-            "backend": {"worker": {"kind": "fake"}, "reviewer": {"kind": "fake"}},
+            "backend": {"worker": {"kind": "fake"}},
             "channels": {
                 "slack": {"enabled": True, "channels": ["C1"], "allowed_users": ["U_ALICE"]}
             },

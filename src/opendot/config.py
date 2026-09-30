@@ -5,13 +5,18 @@ dots replaced by underscores and the whole name upper-cased, for example
 core.state_root -> OPENDOT_CORE_STATE_ROOT and
 backend.claude_code.token_env -> OPENDOT_BACKEND_CLAUDE_CODE_TOKEN_ENV.
 List values in the environment are comma-separated. Tables of tables
-([[rules]], [[repositories]], [[mcp_servers]], sandbox.readonly_mounts) have no
-environment override.
+([[repositories]], [[mcp_servers]], sandbox.readonly_mounts) have no environment
+override.
+
+OpenDot 0.3 removed the reviewer, the approvals and the rules. A file that still
+has [reviewer], [backend.reviewer] or [[rules]] loads: those keys are ignored and
+listed in Config.ignored_keys, which `opendot doctor` reports.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 import os
 import re
 import tomllib
@@ -22,12 +27,13 @@ from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from opendot.models import Level
-
 ENV_PREFIX = "OPENDOT_"
 CONFIG_ENV = "OPENDOT_CONFIG"
 DEFAULT_CONFIG_PATH = Path("~/.config/opendot/opendot.toml")
-BACKEND_ROLES = ("worker", "reviewer")
+BACKEND_ROLES = ("worker",)
+
+# Keys that OpenDot 0.3 removed. A config file that has them still loads.
+RETIRED_KEYS = (("reviewer",), ("backend", "reviewer"), ("rules",))
 
 # FactIQ preset. Only public facts: the connector address and the public plugin
 # repository, whose skill files are shared with the model read-only (MIT licence).
@@ -107,14 +113,8 @@ DEFAULTS: dict[str, Any] = {
         "max_turns_per_task": 200,
         "max_tokens_per_task": 0,
     },
-    "reviewer": {
-        "denials_in_a_row": 3,
-        "denial_window": 50,
-        "denials_in_window": 10,
-    },
     "backend": {
         "worker": {"kind": "codex", "model": ""},
-        "reviewer": {"kind": "claude_code", "model": ""},
         "codex": {"auth_file": "~/.codex/auth.json"},
         "claude_code": {
             "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
@@ -145,7 +145,6 @@ DEFAULTS: dict[str, Any] = {
             "allowed_users": [],
         },
     },
-    "rules": [],
     "github": {
         "token_env": "OPENDOT_GITHUB_TOKEN",
         "api_url": "https://api.github.com",
@@ -189,7 +188,6 @@ DEFAULTS: dict[str, Any] = {
 # Keys whose values are lists of tables; everything else in DEFAULTS is a table or a scalar.
 _TABLE_LISTS = {
     ("sandbox", "readonly_mounts"),
-    ("rules",),
     ("repositories",),
     ("mcp_servers",),
 }
@@ -305,13 +303,6 @@ class LimitsConfig:
 
 
 @dataclass(frozen=True)
-class ReviewerConfig:
-    denials_in_a_row: int
-    denial_window: int
-    denials_in_window: int
-
-
-@dataclass(frozen=True)
 class BackendChoice:
     kind: str  # "codex" | "claude_code" | "opencode" | "fake" | "anthropic_api"
     model: str  # "" = the CLI's own default model
@@ -384,13 +375,6 @@ class SlackChannelConfig:
 
 
 @dataclass(frozen=True)
-class RuleConfig:
-    kind: str
-    target: str
-    level: Level
-
-
-@dataclass(frozen=True)
 class GithubConfig:
     token_env: str  # host variable holding the GitHub token; never enters a container
     api_url: str
@@ -405,10 +389,11 @@ class GithubConfig:
     forbidden_files: list[str]  # glob patterns matched against each changed path's name
     max_file_kib: int
     check_minutes: int  # wall-clock limit for one repository's checks
-    # The longest diff the approver is shown. A longer change is refused, never cut.
+    # The longest diff kept with a push or pull request. A longer change is refused,
+    # never cut.
     max_diff_chars: int = 20_000
-    # Off by default: allow files the approver cannot read (binary files) in a push
-    # to a public repository. The approver sees only their names and sizes.
+    # Off by default: allow binary files in a push to a public repository. The diff
+    # shows only their names and sizes.
     allow_binary_public: bool = False
 
     def token(self, env: Mapping[str, str] | None = None) -> str | None:
@@ -525,9 +510,7 @@ def parse_github_remote(remote: str, host: str) -> tuple[str, str] | None:
 class Config:
     core: CoreConfig
     limits: LimitsConfig
-    reviewer: ReviewerConfig
     worker_backend: BackendChoice
-    reviewer_backend: BackendChoice
     codex: CodexConfig
     claude_code: ClaudeCodeConfig
     opencode: OpencodeConfig
@@ -535,7 +518,6 @@ class Config:
     sandbox: SandboxConfig
     cli: CliChannelConfig
     slack: SlackChannelConfig
-    rules: list[RuleConfig] = field(default_factory=list)
     source_path: Path | None = None
     github: GithubConfig | None = None
     repositories: list[RepositoryConfig] = field(default_factory=list)
@@ -543,6 +525,8 @@ class Config:
     gateway: GatewayConfig | None = None
     mcp_servers: list[McpServerConfig] = field(default_factory=list)
     factiq: FactiqConfig | None = None
+    # Keys from before 0.3 that the file still has, such as "reviewer"; ignored.
+    ignored_keys: list[str] = field(default_factory=list)
 
     # -- derived paths -------------------------------------------------------
 
@@ -627,8 +611,6 @@ class Config:
     def backend_choice(self, role: str) -> BackendChoice:
         if role == "worker":
             return self.worker_backend
-        if role == "reviewer":
-            return self.reviewer_backend
         raise ValueError(f"unknown backend role {role!r}; expected one of {BACKEND_ROLES}")
 
     # -- loading -------------------------------------------------------------
@@ -667,13 +649,28 @@ class Config:
         source_path: Path | None = None,
     ) -> Config:
         """Build a Config from parsed TOML data plus env overrides (env=None: no overrides)."""
+        data, ignored = _drop_retired_keys(data)
         merged = copy.deepcopy(DEFAULTS)
         _merge(merged, data)
         for name, raw in (env or {}).items():
             if name in ENV_OVERRIDES:
                 key_path = ENV_OVERRIDES[name]
                 _set(merged, key_path, _parse_env_value(name, raw, _get(DEFAULTS, key_path)))
-        return _build(merged, source_path)
+        return dataclasses.replace(_build(merged, source_path), ignored_keys=ignored)
+
+
+def _drop_retired_keys(data: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """A copy of data without RETIRED_KEYS, and the dotted names of the keys it had."""
+    data = copy.deepcopy(dict(data))
+    ignored = []
+    for key_path in RETIRED_KEYS:
+        parent: Any = data
+        for part in key_path[:-1]:
+            parent = parent.get(part) if isinstance(parent, Mapping) else None
+        if isinstance(parent, dict) and key_path[-1] in parent:
+            del parent[key_path[-1]]
+            ignored.append(".".join(key_path))
+    return data, ignored
 
 
 def _is_provider_model(model: str) -> bool:
@@ -699,10 +696,6 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
     limits = data["limits"]
     for key, value in limits.items():
         _positive(value, f"limits.{key}", allow_zero=True)
-
-    reviewer = data["reviewer"]
-    for key, value in reviewer.items():
-        _positive(value, f"reviewer.{key}")
 
     backend = data["backend"]
     kinds = known_backend_kinds()
@@ -775,25 +768,6 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
                 f"sandbox.env_allowlist may not name {name}, which holds a login the host keeps"
             )
 
-    rules = []
-    for index, item in enumerate(data["rules"]):
-        where = f"rules[{index}]"
-        if not isinstance(item, Mapping) or not {"kind", "level"} <= set(item) <= {
-            "kind",
-            "target",
-            "level",
-        }:
-            raise ConfigError(f"{where} needs kind and level, and may have target")
-        try:
-            level = Level(item["level"])
-        except ValueError:
-            raise ConfigError(
-                f"{where}.level must be one of {[lvl.value for lvl in Level]}"
-            ) from None
-        rules.append(
-            RuleConfig(kind=str(item["kind"]), target=str(item.get("target", "*")), level=level)
-        )
-
     slack = data["channels"]["slack"]
     cli = data["channels"]["cli"]
     for key in ("channels", "allowed_users"):
@@ -808,9 +782,7 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
             lease_minutes=core["lease_minutes"],
         ),
         limits=LimitsConfig(**limits),
-        reviewer=ReviewerConfig(**reviewer),
         worker_backend=choices["worker"],
-        reviewer_backend=choices["reviewer"],
         codex=CodexConfig(auth_file=_expand(backend["codex"]["auth_file"])),
         claude_code=ClaudeCodeConfig(
             token_env=backend["claude_code"]["token_env"],
@@ -838,7 +810,6 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
             channels=list(slack["channels"]),
             allowed_users=list(slack["allowed_users"]),
         ),
-        rules=rules,
         source_path=source_path,
         github=github,
         repositories=repositories,

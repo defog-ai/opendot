@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS meta (
 -- One row per unit of work. Leases let a worker hold a task while it runs a step.
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 'awaiting_approval' is from versions before 0.3; migrate() requeues such tasks.
     state TEXT NOT NULL CHECK (state IN (
         'queued', 'running', 'awaiting_approval', 'awaiting_reply', 'waiting',
         'done', 'failed', 'stopped', 'skipped')),
@@ -39,7 +40,8 @@ CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks (state, created_at);
 CREATE INDEX IF NOT EXISTS tasks_thread_idx ON tasks (channel, conversation, thread);
 CREATE INDEX IF NOT EXISTS tasks_wait_idx ON tasks (state, wait_until);
 
--- One row per model step run for a task (work, review, reflect).
+-- One row per model step run for a task (work or reflect; 'review' rows come
+-- from versions before 0.3).
 CREATE TABLE IF NOT EXISTS attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -113,7 +115,10 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox (channel, id) WHERE delivered_at IS NULL;
 
--- Actions the agent proposed, as the host prepared them.
+-- Actions the agent proposed, as the host prepared them. Since version 3 every
+-- action is written with level 'allow'. The other levels and statuses
+-- ('awaiting_approval', 'approved', 'handed_off') come from versions before 0.3;
+-- SQLite cannot change a CHECK constraint in place, so they stay allowed.
 CREATE TABLE IF NOT EXISTS actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -133,41 +138,8 @@ CREATE TABLE IF NOT EXISTS actions (
 );
 CREATE INDEX IF NOT EXISTS actions_task_idx ON actions (task_id);
 
--- Approvals are tied to one task. A single-use approval also carries the digest
--- of the exact payload it covers; an until-task-end approval covers kind + target.
-CREATE TABLE IF NOT EXISTS approvals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    action_id INTEGER REFERENCES actions(id) ON DELETE SET NULL,
-    kind TEXT NOT NULL,
-    target TEXT NOT NULL,
-    payload_digest TEXT,
-    mode TEXT NOT NULL CHECK (mode IN ('single_use', 'until_task_end')),
-    status TEXT NOT NULL CHECK (status IN ('pending', 'granted', 'denied', 'used', 'expired')),
-    requested_at TEXT NOT NULL,
-    decided_by TEXT,
-    decided_at TEXT,
-    expires_at TEXT,
-    used_at TEXT,
-    CHECK (mode = 'until_task_end' OR payload_digest IS NOT NULL)
-);
-CREATE INDEX IF NOT EXISTS approvals_task_idx ON approvals (task_id, kind, target);
-
--- Permission rules. Agent-drafted rules stay pending until the operator approves.
-CREATE TABLE IF NOT EXISTS rules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind TEXT NOT NULL,
-    target TEXT NOT NULL DEFAULT '*',
-    level TEXT NOT NULL CHECK (level IN ('allow', 'preapproved', 'ask', 'hand_off')),
-    status TEXT NOT NULL CHECK (status IN ('active', 'pending')),
-    source TEXT NOT NULL CHECK (source IN ('operator', 'config', 'agent')),
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    approved_at TEXT
-);
-
--- Saved schedules. Each run starts a new task owned by creator, with no approvals
--- carried over; results go only to the stored destination.
+-- Saved schedules. Each run starts a new task owned by creator; results go
+-- only to the stored destination.
 CREATE TABLE IF NOT EXISTS schedules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     what TEXT NOT NULL,
@@ -203,18 +175,7 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 CREATE INDEX IF NOT EXISTS notes_profile_idx ON notes (profile, id);
 
--- Every reviewer verdict. Denial limits are computed from this log.
-CREATE TABLE IF NOT EXISTS reviews (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    action_id INTEGER REFERENCES actions(id) ON DELETE SET NULL,
-    verdict TEXT NOT NULL CHECK (verdict IN ('approve', 'deny', 'escalate_to_user')),
-    reason TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS reviews_task_idx ON reviews (task_id, id);
-
--- Audit log: ignored approvals, refused actions, operator commands and similar.
+-- Audit log: refused actions, operator commands and similar.
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
@@ -312,3 +273,7 @@ CREATE TABLE IF NOT EXISTS connector_tokens (
     client_info TEXT NOT NULL DEFAULT '{}',
     updated_at TEXT NOT NULL
 );
+
+-- Schema version 3 removes approvals, rules and the review log. It creates no
+-- tables; the approvals, rules and reviews tables of an older database are kept
+-- as a record and are not read.

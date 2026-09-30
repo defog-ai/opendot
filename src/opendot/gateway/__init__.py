@@ -8,7 +8,7 @@ thread (server.Gateway) answers. The gateway:
 - adds the login (an API key from a host variable, or an OAuth token kept in the
   host database) on the host side, so no login enters the container;
 - refuses every other tool, and tells the model to propose a write tool as the
-  action mcp.<server>.<tool>, which goes through rules, review and approval;
+  action mcp.<server>.<tool>, which the host runs and records;
 - logs every call in the gateway_calls table.
 
 Modules: bridge (container side, standard library only), upstream (the host's
