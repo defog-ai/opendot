@@ -6,6 +6,31 @@ All notable changes to OpenDot are listed here. The format follows
 
 ## [Unreleased]
 
+The host now runs every action the model proposes, without approvals, rules or
+a reviewer. This is a breaking change.
+
+### Removed
+
+- Approvals. `opendot approve N`, `opendot deny N` and the "approve N" and
+  "deny N" replies in Slack are gone. A Slack reply of "approve N" or "deny N"
+  now gets a short message that explains the change.
+- Rules and their levels (`allow`, `preapproved`, `ask`, `hand_off`), the fixed
+  floors, and the `opendot rules` command. Every known action runs as soon as
+  the model proposes it.
+- The reviewer model and the review step. `opendot init` no longer takes
+  `--reviewer`, and the default setup uses Codex only.
+
+### Changed
+
+- A config file that still has `[reviewer]`, `[backend.reviewer]` or `[rules]`
+  loads without an error. OpenDot ignores those sections, and `opendot doctor`
+  lists them so you can delete them.
+- The database moves to version 3 the first time a new `opendot` command
+  opens it. An action that was waiting for an approval is marked as not run,
+  and its task is queued again so the model can propose the action again. The
+  old approval, rule and review tables stay in the file but are not read.
+- A stopped task runs none of the actions that are still left in its step.
+
 ### Added
 
 - `opendot login claude` runs `claude setup-token`, asks for the token and saves

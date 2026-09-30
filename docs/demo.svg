@@ -1,67 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="540" viewBox="0 0 820 540" role="img" aria-label="OpenDot fixes a bug and opens a pull request after you approve it, then sets up a daily check of a web page.">
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="460" viewBox="0 0 820 460" role="img" aria-label="OpenDot fixes a bug and opens a pull request, then sets up a daily check of a web page.">
 <style>
-@keyframes a1 {0% {opacity:0;transform:none} 0.769% {opacity:0;transform:none} 2.115% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a1 {opacity:0;animation:a1 26.0s linear infinite}
-@keyframes a2 {0% {opacity:0;transform:translateY(8px)} 1.538% {opacity:0;transform:translateY(8px)} 2.885% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a2 {opacity:0;animation:a2 26.0s linear infinite}
-@keyframes a3 {0% {opacity:0;transform:none} 6.154% {opacity:0;transform:none} 7.500% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a3 {opacity:0;animation:a3 26.0s linear infinite}
-@keyframes a4 {0% {opacity:0;transform:none} 8.462% {opacity:0;transform:none} 9.808% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a4 {opacity:0;animation:a4 26.0s linear infinite}
-@keyframes a5 {0% {opacity:0;transform:none} 9.231% {opacity:0;transform:none} 10.577% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a5 {opacity:0;animation:a5 26.0s linear infinite}
-@keyframes a6 {0% {opacity:0;transform:none} 13.077% {opacity:0;transform:none} 14.423% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a6 {opacity:0;animation:a6 26.0s linear infinite}
-@keyframes a7 {0% {opacity:0;transform:none} 13.846% {opacity:0;transform:none} 15.192% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a7 {opacity:0;animation:a7 26.0s linear infinite}
-@keyframes a8 {0% {opacity:0;transform:none} 17.692% {opacity:0;transform:none} 19.038% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a8 {opacity:0;animation:a8 26.0s linear infinite}
-@keyframes a9 {0% {opacity:0;transform:none} 18.462% {opacity:0;transform:none} 19.808% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a9 {opacity:0;animation:a9 26.0s linear infinite}
-@keyframes a10 {0% {opacity:0;transform:none} 22.308% {opacity:0;transform:none} 23.654% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a10 {opacity:0;animation:a10 26.0s linear infinite}
-@keyframes a11 {0% {opacity:0;transform:translateY(8px)} 23.846% {opacity:0;transform:translateY(8px)} 25.192% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a11 {opacity:0;animation:a11 26.0s linear infinite}
-@keyframes a12 {0% {opacity:0;transform:none} 23.846% {opacity:0;transform:none} 25.192% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a12 {opacity:0;animation:a12 26.0s linear infinite}
-@keyframes a13 {0% {opacity:0;transform:translateY(8px)} 30.000% {opacity:0;transform:translateY(8px)} 31.346% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a13 {opacity:0;animation:a13 26.0s linear infinite}
-@keyframes a14 {0% {opacity:0;transform:translateY(8px)} 34.615% {opacity:0;transform:translateY(8px)} 35.962% {opacity:1;transform:none} 48.462% {opacity:1;transform:none} 49.808% {opacity:0;transform:none} 100% {opacity:0}}
-.a14 {opacity:0;animation:a14 26.0s linear infinite}
-@keyframes a15 {0% {opacity:0;transform:none} 50.769% {opacity:0;transform:none} 52.115% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a15 {opacity:0;animation:a15 26.0s linear infinite}
-@keyframes a16 {0% {opacity:0;transform:translateY(8px)} 51.923% {opacity:0;transform:translateY(8px)} 53.269% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a16 {opacity:0;animation:a16 26.0s linear infinite}
-@keyframes a17 {0% {opacity:0;transform:none} 56.154% {opacity:0;transform:none} 57.500% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a17 {opacity:0;animation:a17 26.0s linear infinite}
-@keyframes a18 {0% {opacity:0;transform:none} 59.231% {opacity:0;transform:none} 60.577% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a18 {opacity:0;animation:a18 26.0s linear infinite}
-@keyframes a19 {0% {opacity:0;transform:none} 60.000% {opacity:0;transform:none} 61.346% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a19 {opacity:0;animation:a19 26.0s linear infinite}
-@keyframes a20 {0% {opacity:0;transform:none} 63.077% {opacity:0;transform:none} 64.423% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a20 {opacity:0;animation:a20 26.0s linear infinite}
-@keyframes a21 {0% {opacity:0;transform:none} 63.846% {opacity:0;transform:none} 65.192% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a21 {opacity:0;animation:a21 26.0s linear infinite}
-@keyframes a22 {0% {opacity:0;transform:none} 66.923% {opacity:0;transform:none} 68.269% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a22 {opacity:0;animation:a22 26.0s linear infinite}
-@keyframes a23 {0% {opacity:0;transform:translateY(8px)} 68.462% {opacity:0;transform:translateY(8px)} 69.808% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a23 {opacity:0;animation:a23 26.0s linear infinite}
-@keyframes a24 {0% {opacity:0;transform:none} 68.462% {opacity:0;transform:none} 69.808% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a24 {opacity:0;animation:a24 26.0s linear infinite}
-@keyframes a25 {0% {opacity:0;transform:translateY(8px)} 73.846% {opacity:0;transform:translateY(8px)} 75.192% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a25 {opacity:0;animation:a25 26.0s linear infinite}
-@keyframes a26 {0% {opacity:0;transform:none} 80.000% {opacity:0;transform:none} 81.346% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a26 {opacity:0;animation:a26 26.0s linear infinite}
-@keyframes a27 {0% {opacity:0;transform:translateY(8px)} 83.077% {opacity:0;transform:translateY(8px)} 84.423% {opacity:1;transform:none} 98.077% {opacity:1;transform:none} 99.423% {opacity:0;transform:none} 100% {opacity:0}}
-.a27 {opacity:0;animation:a27 26.0s linear infinite}
-@media (prefers-reduced-motion: reduce) { [class^="a"] { animation-play-state: paused; animation-delay: -11s; } }
+@keyframes a1 {0% {opacity:0;transform:none} 0.909% {opacity:0;transform:none} 2.500% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a1 {opacity:0;animation:a1 22.0s linear infinite}
+@keyframes a2 {0% {opacity:0;transform:translateY(8px)} 1.818% {opacity:0;transform:translateY(8px)} 3.409% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a2 {opacity:0;animation:a2 22.0s linear infinite}
+@keyframes a3 {0% {opacity:0;transform:none} 7.273% {opacity:0;transform:none} 8.864% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a3 {opacity:0;animation:a3 22.0s linear infinite}
+@keyframes a4 {0% {opacity:0;transform:none} 10.000% {opacity:0;transform:none} 11.591% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a4 {opacity:0;animation:a4 22.0s linear infinite}
+@keyframes a5 {0% {opacity:0;transform:none} 10.909% {opacity:0;transform:none} 12.500% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a5 {opacity:0;animation:a5 22.0s linear infinite}
+@keyframes a6 {0% {opacity:0;transform:none} 15.455% {opacity:0;transform:none} 17.045% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a6 {opacity:0;animation:a6 22.0s linear infinite}
+@keyframes a7 {0% {opacity:0;transform:none} 16.364% {opacity:0;transform:none} 17.955% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a7 {opacity:0;animation:a7 22.0s linear infinite}
+@keyframes a8 {0% {opacity:0;transform:none} 20.909% {opacity:0;transform:none} 22.500% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a8 {opacity:0;animation:a8 22.0s linear infinite}
+@keyframes a9 {0% {opacity:0;transform:none} 21.818% {opacity:0;transform:none} 23.409% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a9 {opacity:0;animation:a9 22.0s linear infinite}
+@keyframes a10 {0% {opacity:0;transform:none} 26.364% {opacity:0;transform:none} 27.955% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a10 {opacity:0;animation:a10 22.0s linear infinite}
+@keyframes a11 {0% {opacity:0;transform:translateY(8px)} 29.091% {opacity:0;transform:translateY(8px)} 30.682% {opacity:1;transform:none} 48.182% {opacity:1;transform:none} 49.773% {opacity:0;transform:none} 100% {opacity:0}}
+.a11 {opacity:0;animation:a11 22.0s linear infinite}
+@keyframes a12 {0% {opacity:0;transform:none} 50.909% {opacity:0;transform:none} 52.500% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a12 {opacity:0;animation:a12 22.0s linear infinite}
+@keyframes a13 {0% {opacity:0;transform:translateY(8px)} 52.273% {opacity:0;transform:translateY(8px)} 53.864% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a13 {opacity:0;animation:a13 22.0s linear infinite}
+@keyframes a14 {0% {opacity:0;transform:none} 57.273% {opacity:0;transform:none} 58.864% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a14 {opacity:0;animation:a14 22.0s linear infinite}
+@keyframes a15 {0% {opacity:0;transform:none} 60.909% {opacity:0;transform:none} 62.500% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a15 {opacity:0;animation:a15 22.0s linear infinite}
+@keyframes a16 {0% {opacity:0;transform:none} 61.818% {opacity:0;transform:none} 63.409% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a16 {opacity:0;animation:a16 22.0s linear infinite}
+@keyframes a17 {0% {opacity:0;transform:none} 65.455% {opacity:0;transform:none} 67.045% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a17 {opacity:0;animation:a17 22.0s linear infinite}
+@keyframes a18 {0% {opacity:0;transform:none} 66.364% {opacity:0;transform:none} 67.955% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a18 {opacity:0;animation:a18 22.0s linear infinite}
+@keyframes a19 {0% {opacity:0;transform:none} 70.000% {opacity:0;transform:none} 71.591% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a19 {opacity:0;animation:a19 22.0s linear infinite}
+@keyframes a20 {0% {opacity:0;transform:translateY(8px)} 71.818% {opacity:0;transform:translateY(8px)} 73.409% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a20 {opacity:0;animation:a20 22.0s linear infinite}
+@keyframes a21 {0% {opacity:0;transform:none} 78.182% {opacity:0;transform:none} 79.773% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a21 {opacity:0;animation:a21 22.0s linear infinite}
+@keyframes a22 {0% {opacity:0;transform:translateY(8px)} 81.818% {opacity:0;transform:translateY(8px)} 83.409% {opacity:1;transform:none} 97.727% {opacity:1;transform:none} 99.318% {opacity:0;transform:none} 100% {opacity:0}}
+.a22 {opacity:0;animation:a22 22.0s linear infinite}
+@media (prefers-reduced-motion: reduce) { [class^="a"] { animation-play-state: paused; animation-delay: -9s; } }
 </style>
-<rect width="820" height="540" rx="14" fill="#f7f7f5"/>
-<rect x="12" y="12" width="796" height="516" rx="10" fill="#ffffff" stroke="#e3e3e0"/>
+<rect width="820" height="460" rx="14" fill="#f7f7f5"/>
+<rect x="12" y="12" width="796" height="436" rx="10" fill="#ffffff" stroke="#e3e3e0"/>
 <circle cx="36" cy="33" r="5" fill="#ff5f57"/><circle cx="54" cy="33" r="5" fill="#febc2e"/><circle cx="72" cy="33" r="5" fill="#28c840"/>
 <text x="92" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start"># team-ops</text>
 <line x1="12" y1="56" x2="808" y2="56" stroke="#e3e3e0"/>
-<g class="a1"><text x="780" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#6b6b70" font-weight="500" text-anchor="end">worker: Codex  ·  reviewer: Claude Code</text></g>
+<g class="a1"><text x="780" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#6b6b70" font-weight="500" text-anchor="end">worker: Codex</text></g>
 <g class="a2"><rect x="40" y="76" width="32" height="32" rx="8" fill="#8a5cf6"/><text x="56" y="97" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">Y</text><text x="84" y="89" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">you</text><text x="84" y="110" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">@opendot signup fails when the email has a &quot;+&quot;.</text><text x="84" y="131" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">Fix it and open a PR on acme/web.</text></g>
 <g class="a3"><rect x="84" y="159" width="3" height="20" fill="#e3e3e0"/><text x="98" y="174" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">cloning acme/web</text></g>
 <g class="a4"><text x="560" y="174" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
@@ -69,23 +59,18 @@
 <g class="a6"><text x="560" y="200" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
 <g class="a7"><rect x="84" y="211" width="3" height="20" fill="#e3e3e0"/><text x="98" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">running the test suite</text></g>
 <g class="a8"><text x="560" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">212 passed</text></g>
-<g class="a9"><rect x="84" y="237" width="3" height="20" fill="#e3e3e0"/><text x="98" y="252" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">second model reviews the change</text></g>
-<g class="a10"><text x="560" y="252" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">approved</text></g>
-<g class="a11"><rect x="40" y="282" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="303" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="295" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="316" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">The email check rejected &quot;+&quot;. I fixed the pattern and</text><text x="84" y="337" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">added a test. Open the pull request on acme/web?</text></g>
-<g class="a12"><text x="84" y="364" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">reply  approve 12  or  deny 12</text></g>
-<g class="a13"><rect x="40" y="388" width="32" height="32" rx="8" fill="#8a5cf6"/><text x="56" y="409" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">Y</text><text x="84" y="401" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">you</text><text x="84" y="422" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">approve 12</text></g>
-<g class="a14"><rect x="40" y="450" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="471" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="463" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="484" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">Opened acme/web#481  &quot;Accept + in signup emails&quot;</text></g>
-<g class="a15"><text x="780" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#6b6b70" font-weight="500" text-anchor="end">worker: Claude Code  ·  reviewer: opencode</text></g>
-<g class="a16"><rect x="40" y="76" width="32" height="32" rx="8" fill="#8a5cf6"/><text x="56" y="97" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">Y</text><text x="84" y="89" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">you</text><text x="84" y="110" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">Every weekday at 9am, check example.com/pricing</text><text x="84" y="131" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">and tell me if anything changed.</text></g>
-<g class="a17"><rect x="84" y="159" width="3" height="20" fill="#e3e3e0"/><text x="98" y="174" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">opening the page in Chrome</text></g>
-<g class="a18"><text x="560" y="174" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
-<g class="a19"><rect x="84" y="185" width="3" height="20" fill="#e3e3e0"/><text x="98" y="200" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">reading the pricing table</text></g>
-<g class="a20"><text x="560" y="200" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
-<g class="a21"><rect x="84" y="211" width="3" height="20" fill="#e3e3e0"/><text x="98" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">second model reviews the schedule</text></g>
-<g class="a22"><text x="560" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">approved</text></g>
-<g class="a23"><rect x="40" y="256" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="277" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="269" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="290" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">New schedule: weekdays at 09:00, post only when</text><text x="84" y="311" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">the page changes. Save it?</text></g>
-<g class="a24"><text x="84" y="338" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">reply  approve 13  or  deny 13</text></g>
-<g class="a25"><rect x="40" y="362" width="32" height="32" rx="8" fill="#8a5cf6"/><text x="56" y="383" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">Y</text><text x="84" y="375" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">you</text><text x="84" y="396" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">approve 13</text></g>
-<g class="a26"><line x1="40" y1="432" x2="780" y2="432" stroke="#e3e3e0"/><rect x="350.0" y="421" width="120" height="22" rx="11" fill="#ffffff" stroke="#e3e3e0"/><text x="410.0" y="437" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#6b6b70" font-weight="600" text-anchor="middle">next morning</text></g>
-<g class="a27"><rect x="40" y="454" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="475" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="467" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="488" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">example.com/pricing changed: the Team plan went from $20 to $24.</text></g>
+<g class="a9"><rect x="84" y="237" width="3" height="20" fill="#e3e3e0"/><text x="98" y="252" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">pushing the branch, opening the pull request</text></g>
+<g class="a10"><text x="560" y="252" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
+<g class="a11"><rect x="40" y="282" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="303" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="295" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="316" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">The email check rejected &quot;+&quot;. I fixed the pattern, added</text><text x="84" y="337" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">a test and opened acme/web#481  &quot;Accept + in signup emails&quot;.</text></g>
+<g class="a12"><text x="780" y="38" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#6b6b70" font-weight="500" text-anchor="end">worker: Claude Code</text></g>
+<g class="a13"><rect x="40" y="76" width="32" height="32" rx="8" fill="#8a5cf6"/><text x="56" y="97" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">Y</text><text x="84" y="89" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">you</text><text x="84" y="110" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">Every weekday at 9am, check example.com/pricing</text><text x="84" y="131" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">and tell me if anything changed.</text></g>
+<g class="a14"><rect x="84" y="159" width="3" height="20" fill="#e3e3e0"/><text x="98" y="174" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">opening the page in Chrome</text></g>
+<g class="a15"><text x="560" y="174" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
+<g class="a16"><rect x="84" y="185" width="3" height="20" fill="#e3e3e0"/><text x="98" y="200" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">reading the pricing table</text></g>
+<g class="a17"><text x="560" y="200" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">done</text></g>
+<g class="a18"><rect x="84" y="211" width="3" height="20" fill="#e3e3e0"/><text x="98" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#6b6b70" font-weight="400" text-anchor="start">saving the schedule</text></g>
+<g class="a19"><text x="560" y="226" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13.5" fill="#1f8a4c" font-weight="600" text-anchor="start">saved</text></g>
+<g class="a20"><rect x="40" y="256" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="277" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="269" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="290" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">Saved: weekdays at 09:00. I post only when the</text><text x="84" y="311" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">page changes.</text></g>
+<g class="a21"><line x1="40" y1="350" x2="780" y2="350" stroke="#e3e3e0"/><rect x="350.0" y="339" width="120" height="22" rx="11" fill="#ffffff" stroke="#e3e3e0"/><text x="410.0" y="355" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#6b6b70" font-weight="600" text-anchor="middle">next morning</text></g>
+<g class="a22"><rect x="40" y="372" width="32" height="32" rx="8" fill="#2f6fed"/><text x="56" y="393" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#fff" font-weight="700" text-anchor="middle">O</text><text x="84" y="385" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1d1d1f" font-weight="700" text-anchor="start">OpenDot</text><text x="84" y="406" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#1d1d1f" font-weight="400" text-anchor="start">example.com/pricing changed: the Team plan went from $20 to $24.</text></g>
 </svg>

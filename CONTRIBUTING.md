@@ -46,14 +46,15 @@ These parts decide what the model can do. A change to them needs a test that
 shows the old limit still holds:
 
 - `sandbox.py` and `container_contract.py` (container flags and mounts);
-- `actions/`, `rules.py` and `approvals.py` (what may run, and who decides);
-- `reviewer.py` and `prompts/REVIEW.md` (the second check);
+- `actions/` and `github/actions.py` (which actions exist, and where each one
+  goes);
+- `github/public_text.py` (the check before a push to a public repository);
 - `redact.py` (what reaches logs).
 
 A change must not give the step container the Docker socket, the state folder,
 the Slack token or host variables outside `sandbox.env_allowlist`. It must not
-let a rule lower a fixed floor, and it must not let a failed review count as an
-approval.
+let the model choose the target of an action, and it must not let a stopped
+task run more actions.
 
 Report security problems by email to security@defog.ai, not in a public issue.
 See [SECURITY.md](SECURITY.md).

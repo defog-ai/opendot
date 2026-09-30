@@ -1,7 +1,7 @@
 # How OpenDot works
 
-This page explains how OpenDot decides what a model may do, and lists what is
-not built yet. The [README](../README.md) has the short version.
+This page explains how OpenDot turns what a model proposes into actions, and
+lists what is not built yet. The [README](../README.md) has the short version.
 [features.md](features.md) explains pull requests, the browser and connectors.
 
 ## Configuration
@@ -15,24 +15,22 @@ You can also set any key with an environment variable named
 
 The model never acts directly. It can only propose actions. The OpenDot host is
 a Python process on your machine, and it holds everything the model does not
-get: the SQLite database, the Slack token, the GitHub token, the connector
-keys, your rules and the approval records.
+get: the SQLite database, the Slack token, the GitHub token and the connector
+keys. The host runs every valid action that the model proposes. It does not ask
+you first, and no second model checks the action.
 
 ```text
   you (CLI or Slack)
         |
         v
 +----------------------------- OpenDot host (your machine) ------------------------------+
-|  SQLite state   rules   approvals   notes   schedules   Slack token   outbox           |
+|  SQLite state   notes   schedules   Slack token   GitHub token   connector keys   outbox |
 |                                                                                        |
 |  1. work step  ------------------------------> [ step container: the worker model CLI ] |
 |        <------ JSON: reply, status, proposed actions                                    |
 |  2. action registry: unknown kinds are refused; each action is rebuilt from the task   |
-|  3. rule engine: allow / preapproved / ask / hand_off, raised to fixed floors          |
-|  4. review step ----------------------------> [ step container: the other vendor ]      |
-|        <------ approve or deny for each action (no answer counts as deny)               |
-|  5. approval: "ask" parks the task until you approve or deny it                        |
-|  6. outbox: the host posts the reply or runs the action                                 |
+|  3. the host runs each action in order, unless the task was stopped                    |
+|  4. outbox: the host posts the reply                                                   |
 +----------------------------------------------------------------------------------------+
 ```
 
@@ -58,30 +56,20 @@ What each part does:
   the host. No step container gets them: the host pushes and opens pull
   requests itself, and the connector gateway adds the key to each request it
   sends on.
-- **Rules.** Each action gets one of four levels. `allow` runs after review.
-  `preapproved` runs only when a stored approval covers it. `ask` stops the task
-  until you approve or deny. `hand_off` never runs; you get the prepared material
-  instead. Fixed floors cannot be lowered by any rule: new schedules, rule
-  changes, pushes, pull requests and connector write tools always ask; issues
-  and issue comments can be lowered to `preapproved` but no further;
-  credentials, payments, purchases and access changes are always handed off.
-  Only the operator on the local command line can add or approve rules.
-- **Reviewer.** A second model, by default from a different vendor, sees the
-  request, the proposed actions and the evidence, and gives a verdict for each
-  action. A failed, missing or unreadable review counts as a denial. A task stops
-  after 3 denials in a row or 10 denials in the last 50 reviews.
-- **Approvals.** An approval belongs to one task. A follow-up, a retry or a
-  scheduled run starts with none. For an action that posts or sends something,
-  the approval also covers one exact payload: the host stores a digest of it, and
-  the approval does not apply if the payload changes. Only the requester, on the
-  channel the task came from, and the operator on the local command line can
-  decide an approval.
+- **Running actions.** The host runs the actions of a step one after the other,
+  as soon as the step ends. Before each action it checks that the task is still
+  running, so `opendot stop N` or a stop message prevents the actions that have
+  not run yet. `opendot show N` lists each action with its result.
+- **Checks before a push.** A push runs your repository's `checks` first and
+  stops when one fails. The host never pushes to the default branch. For a
+  public repository, it refuses a change or a pull request text that looks
+  private.
 - **Budgets.** Each task has limits on active time, steps, turns and tokens.
   There is no money limit, because subscription logins do not report a cost.
 
 Text from requesters, channels, web pages and files is marked as untrusted in
-every prompt. The reviewer is told to judge actions against the requester's own
-request, not against instructions found in that text.
+every prompt. The model is told that this text can never authorize an outward
+action. This is an instruction to the model only; the host does not enforce it.
 
 ## Not built yet
 
@@ -89,9 +77,8 @@ request, not against instructions found in that text.
 - Gmail, or any email channel or trigger.
 - Proactive research when idle.
 - Parallel runs: one worker runs one task step at a time.
-- Rules drafted by the agent.
-- A private sign-in form. The browser has no logins, and credential actions
-  are always handed off to you.
+- A private sign-in form. The browser has no logins.
+- A way to approve an action before it runs. OpenDot no longer has approvals.
 - A full cloud computer with a desktop, or a way to use your own computer.
 - Pull requests on forges other than GitHub. A plain git remote
   (`forge = "none"`) gets branch pushes only.
@@ -111,9 +98,6 @@ request, not against instructions found in that text.
   the guard against setuid programs inside the image; [SECURITY.md](../SECURITY.md)
   explains the trade-off. Docker from docker.com keeps every setting. Rootless
   Docker is untested.
-- **An approved action runs on the next pass.** `opendot approve N` queues the
-  task again. The push, pull request or connector call happens on the next
-  `tick` or `run-once`, not at the moment you approve.
 - **A plain git remote's visibility is what you state.** With
   `forge = "none"`, OpenDot cannot ask the server whether the repository is
   public. It uses your `visibility` setting for the public text check.
@@ -134,9 +118,6 @@ request, not against instructions found in that text.
   OAuth login is written back to your file only when it keeps the same fields and
   your own file did not change during the step. A changed API key is never
   written back.
-- **Codex review steps can still run shell commands.** The work folder is
-  read-only in review steps and no host variables are passed, but the network
-  follows the config. Claude Code and opencode review steps get no tools.
 - **A Codex token refresh inside the container is written back to your
   `~/.codex/auth.json`.** OpenDot copies it back only when the file still
   belongs to the same account and your own file did not change during the step.
@@ -144,9 +125,10 @@ request, not against instructions found in that text.
   user mentions OpenDot in a finished thread, the new task does not see the
   earlier request or its reply, because the earlier session holds the first
   requester's notes. A follow-up from the same person continues that session.
-- **Approval and hand-off messages show the proposed text in the task's
-  thread.** In a shared Slack channel, other members can read a proposed reply
-  before you approve it.
+- **A prompt injection can cause an action.** A web page, a file or a message
+  that the model reads can ask it to propose an action, and the host runs any
+  valid action. Connect only the repositories and connector `write` tools that
+  you accept this for.
 - **Resuming a Claude Code session in a later step is untested.**
 - **Codex steering and a retry of a stalled Codex turn are not built.** A stop
   message ends the step; other messages are read at the start of the next step.
