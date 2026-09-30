@@ -150,7 +150,10 @@ class _GitHubHandler:
         token = self.config.github.token(self.env) if self.config.github else None
         if not token:
             name = self.config.github.token_env if self.config.github else "the token variable"
-            raise InvalidProposal(f"{self.kind}: the host has no GitHub token ({name} is not set)")
+            raise InvalidProposal(
+                f"{self.kind}: the host has no GitHub token ({name} is not set; "
+                "run `opendot login github`)"
+            )
         return token
 
     def _client(self) -> GitHubClient:

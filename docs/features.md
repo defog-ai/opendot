@@ -24,9 +24,11 @@ remote = "https://github.com/example/app.git"
 checks = ["uv run pytest -q"]
 ```
 
-Set `OPENDOT_GITHUB_TOKEN` to a fine-grained token that can write contents,
-pull requests and issues of that repository only. `opendot doctor` checks that
-git is installed, the token is set and each remote is on GitHub.
+Make a fine-grained token that can write contents, pull requests and issues of
+that repository only, and save it with `opendot login github`. The runs that
+cron starts find the saved token. A set `OPENDOT_GITHUB_TOKEN` variable wins
+over it. `opendot doctor` checks that git is installed, the token is saved or
+set, and each remote is on GitHub.
 
 How it works:
 
@@ -192,8 +194,9 @@ tools = [
   long is stopped.
 - `opendot connectors list`, `login <name>`, `logout <name>` and `test <name>`
   show the connectors, sign in to one that uses OAuth (the tokens are kept in
-  the OpenDot database on the host), remove a sign-in, and check that the
-  allowed tools exist on the server.
+  the OpenDot database on the host) or save the key of one that uses
+  `bearer_env` (in `core.keys_dir`, mode 600), remove a sign-in or a saved key,
+  and check that the allowed tools exist on the server.
 
 **FactIQ is built in as a preset.** [FactIQ](https://factiq.com) serves public
 economic and financial data over MCP at `https://api.factiq.com/mcp`. Turn it
@@ -215,8 +218,9 @@ enabled = true
 # feedback = false             # true adds send_feedback as an action
 ```
 
-- With `auth = "bearer_env"`, create an API key in your FactIQ settings and put
-  it in `FACTIQ_API_KEY` on the host.
+- With `auth = "bearer_env"`, create an API key in your FactIQ settings and
+  save it with `opendot connectors login factiq`. A set `FACTIQ_API_KEY`
+  variable wins over the saved key.
 - The preset allows FactIQ's read tools. `send_feedback` is the only tool that
   sends something, and it is off unless `feedback = true`.
 - With `instructions = true`, OpenDot downloads the skill and reference files

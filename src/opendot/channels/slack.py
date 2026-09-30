@@ -120,7 +120,8 @@ class SlackChannel:
         self.token = token if token is not None else self.slack.bot_token()
         if not self.token:
             raise ChannelError(
-                f"the Slack bot token is missing; set the variable {self.slack.bot_token_env}"
+                "the Slack bot token is missing; run `opendot login slack` "
+                f"or set the variable {self.slack.bot_token_env}"
             )
         self.client = client or httpx.Client(base_url=API_BASE, timeout=30.0)
         self.store = store

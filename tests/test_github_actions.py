@@ -796,11 +796,11 @@ def test_cli_prune_removes_copies_of_finished_tasks(env: Env, monkeypatch, capsy
 
 
 def test_doctor_checks(env: Env, monkeypatch) -> None:
+    # The token is checked by `opendot doctor` with the other saved logins.
     monkeypatch.delenv("OPENDOT_GITHUB_TOKEN", raising=False)
     checks = {name: ok for name, ok, _ in github_cli.doctor_checks(env.config)}
     assert checks == {
         "github: git": True,
-        "github: token": False,
         "github: widget remote": True,
     }
 

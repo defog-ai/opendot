@@ -103,6 +103,7 @@ MCP_TOOL_MODES = ("read", "write")
 DEFAULTS: dict[str, Any] = {
     "core": {
         "state_root": "~/.local/state/opendot",
+        "keys_dir": "~/.config/opendot/keys",
         "timezone": "UTC",
         "lease_minutes": 60,
     },
@@ -287,6 +288,7 @@ def _expand(value: str) -> Path:
 @dataclass(frozen=True)
 class CoreConfig:
     state_root: Path
+    keys_dir: Path  # saved logins, one file per variable name; see key_files.py
     timezone: str
     lease_minutes: int
 
@@ -527,6 +529,8 @@ class Config:
     factiq: FactiqConfig | None = None
     # Keys from before 0.3 that the file still has, such as "reviewer"; ignored.
     ignored_keys: list[str] = field(default_factory=list)
+    # Variables that key_files.load_config set from saved files, not from the shell.
+    keys_from_files: tuple[str, ...] = ()
 
     # -- derived paths -------------------------------------------------------
 
@@ -778,6 +782,7 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
     return Config(
         core=CoreConfig(
             state_root=_expand(core["state_root"]),
+            keys_dir=_expand(core["keys_dir"]),
             timezone=core["timezone"],
             lease_minutes=core["lease_minutes"],
         ),

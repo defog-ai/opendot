@@ -2,6 +2,7 @@
 
 opendot connectors list
 opendot connectors login <name> [--no-browser] [--paste] [--port N]
+    (for a connector with auth = "bearer_env", asks for the API key and saves it)
 opendot connectors logout <name>
 opendot connectors fetch-instructions [<name>] [--force]
 opendot connectors test <name>
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from opendot.config import FACTIQ_PLUGIN_COMMIT, Config
+from opendot.key_files import KeyFileError, key_path, key_source, load_config
 
 if TYPE_CHECKING:
     from opendot.config import McpServerConfig
@@ -27,8 +29,8 @@ __all__ = ["ConnectorCliError", "FACTIQ_INIT_BLOCK", "doctor_checks", "register_
 
 FACTIQ_INIT_BLOCK = (
     "\n"
-    "# FactIQ connector (https://api.factiq.com/mcp). Log in with an API key in\n"
-    '# FACTIQ_API_KEY, or set auth = "oauth" and run `opendot connectors login factiq`.\n'
+    "# FactIQ connector (https://api.factiq.com/mcp). Save an API key with\n"
+    '# `opendot connectors login factiq`. With auth = "oauth", the same command signs in.\n'
     "[factiq]\n"
     "enabled = true\n"
 )
@@ -39,7 +41,7 @@ class ConnectorCliError(ValueError):
 
 
 def _load(args: argparse.Namespace) -> Config:
-    return Config.load(Path(args.config) if getattr(args, "config", None) else None)
+    return load_config(Path(args.config) if getattr(args, "config", None) else None)
 
 
 def _server(config: Config, name: str) -> McpServerConfig:
@@ -54,9 +56,12 @@ def _login_state(config: Config, server: McpServerConfig) -> tuple[bool, str]:
     if server.auth == "none":
         return True, "no login needed"
     if server.auth == "bearer_env":
-        if os.environ.get(server.auth_env):
-            return True, f"API key in {server.auth_env}"
-        return False, f"set {server.auth_env} on the host"
+        source, detail = key_source(config, server.auth_env, os.environ)
+        if source in ("variable", "file"):
+            return True, f"API key: {detail}"
+        if source == "missing":
+            return False, f"run `opendot connectors login {server.name}` to save the API key"
+        return False, detail
     if _stored_token(config, server.name):
         return True, "OAuth token stored"
     return False, f"run `opendot connectors login {server.name}`"
@@ -114,6 +119,11 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_login(args: argparse.Namespace) -> int:
     config = _load(args)
     server = _server(config, args.name)
+    if server.auth == "none":
+        print(f"{server.name} needs no login.")
+        return 0
+    if server.auth == "bearer_env":
+        return _save_api_key(config, server)
     from opendot.gateway.oauth import LoginError, login
     from opendot.store import open_store
 
@@ -135,9 +145,34 @@ def cmd_login(args: argparse.Namespace) -> int:
     return 0
 
 
+def _save_api_key(config: Config, server: McpServerConfig) -> int:
+    """Ask for the connector's API key and save it as the key file for auth_env."""
+    from opendot.__main__ import read_secret, report_saved_login, save_login
+
+    variable = server.auth_env
+    if variable in config.keys_from_files:
+        # _load set it from the old file; the new value replaces that file.
+        os.environ.pop(variable, None)
+    value = read_secret(f"Paste the API key for {server.name} (it is not shown): ")
+    path = save_login(config, variable, f"API key for {server.name}", value)
+    report_saved_login(variable, path)
+    return 0
+
+
 def cmd_logout(args: argparse.Namespace) -> int:
     config = _load(args)
     server = _server(config, args.name)
+    if server.auth == "bearer_env":
+        try:
+            path = key_path(config.core.keys_dir, server.auth_env)
+        except KeyFileError as exc:
+            raise ConnectorCliError(str(exc)) from None
+        if path.is_file() and not path.is_symlink():
+            path.unlink()
+            print(f"Removed the saved API key {path}.")
+        else:
+            print(f"No API key saved for {server.name}.")
+        return 0
     from opendot.store import open_store
 
     store = open_store(config)
@@ -247,8 +282,7 @@ def _with_factiq(original):
                 print(f"Could not download the FactIQ plugin files yet ({exc}).")
                 print("A work step will try again.")
         print("Next: create an API key at https://factiq.com/settings/security")
-        print("and set FACTIQ_API_KEY on the host,")
-        print('or set auth = "oauth" under [factiq] and run `opendot connectors login factiq`.')
+        print("and run `opendot connectors login factiq` to save it.")
         return 0
 
     return handler
@@ -276,7 +310,9 @@ def register_cli(subparsers: argparse._SubParsersAction) -> None:
     p = commands.add_parser("list", help="show connectors and their login state")
     p.set_defaults(handler=cmd_list)
 
-    p = commands.add_parser("login", help="sign in to an oauth connector")
+    p = commands.add_parser(
+        "login", help="sign in to an oauth connector, or save a connector's API key"
+    )
     p.add_argument("name")
     p.add_argument(
         "--no-browser", action="store_true", help="print the address; do not open a browser"
@@ -291,7 +327,7 @@ def register_cli(subparsers: argparse._SubParsersAction) -> None:
     )
     p.set_defaults(handler=cmd_login)
 
-    p = commands.add_parser("logout", help="delete a stored oauth token")
+    p = commands.add_parser("logout", help="delete a stored oauth token or saved API key")
     p.add_argument("name")
     p.set_defaults(handler=cmd_logout)
 
@@ -316,8 +352,10 @@ def doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
 
     results: list[tuple[str, bool, str]] = []
     for server in config.connectors():
-        ok, detail = _login_state(config, server)
-        results.append((f"connector {server.name} login", ok, detail))
+        # `opendot doctor` checks API keys with the other saved logins.
+        if server.auth != "bearer_env":
+            ok, detail = _login_state(config, server)
+            results.append((f"connector {server.name} login", ok, detail))
         if server.command:
             results.append(
                 (

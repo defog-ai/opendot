@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json as jsonlib
+import os
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -327,9 +328,17 @@ class HttpMock:
 
 
 @pytest.fixture(autouse=True)
-def _no_saved_logins(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> None:
-    """Point ~ at an empty folder, so a login saved on this machine never reaches a test."""
+def _no_saved_logins(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> Iterator[None]:
+    """Point ~ at an empty folder, so a login saved on this machine never reaches a test.
+
+    CLI commands set saved logins in os.environ; put the environment back after
+    each test, so a login one test saved does not reach the next.
+    """
+    before = dict(os.environ)
     monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
+    yield
+    os.environ.clear()
+    os.environ.update(before)
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ DESCRIPTION = (
 COMMANDS: dict[str, str] = {
     "init": "write a config file and create the state folder",
     "migrate": "create or update the SQLite database",
-    "login": "save a login so you need no line in your shell profile (Claude Code)",
+    "login": "save a login (claude, slack or github) so cron runs find it",
     "doctor": "check the config, the logins, Docker and the image",
     "build-image": "build the worker image from the packaged Dockerfile",
     "verify-image": "check that the worker image has every tool and runs as non-root",
@@ -52,7 +52,7 @@ With real backends:
   opendot tick                 # or: opendot install-cron
 
 Optional features (each is off until the config turns it on):
-  [[repositories]] + OPENDOT_GITHUB_TOKEN   pull requests; see `opendot github`
+  [[repositories]] + opendot login github   pull requests; see `opendot github`
   [browser] enabled = true                  headless Chromium; `opendot browser check`
   opendot init --with-factiq                the FactIQ connector; see `opendot connectors`
 

@@ -13,6 +13,7 @@ from opendot.config import FACTIQ_PLUGIN_COMMIT, Config, ConfigError
 from opendot.gateway import cli as gateway_cli
 from opendot.models import GatewayCallStatus, GatewayMode
 from opendot.store import open_store
+from test_cli import FakeRunner
 from test_gateway_instructions import make_archive
 from test_gateway_server import fake_factory
 
@@ -91,15 +92,21 @@ def test_connectors_list_and_doctor(home, downloads, monkeypatch, capsys):
     assert run(home, "connectors", "list") == 0
     out = capsys.readouterr().out
     assert "factiq  https://api.factiq.com/mcp" in out
-    assert "login: missing (set FACTIQ_API_KEY on the host)" in out
+    assert "login: missing (run `opendot connectors login factiq` to save the API key)" in out
     assert f"instructions: at {FACTIQ_PLUGIN_COMMIT[:12]}" in out
 
+    # The API key is checked by `opendot doctor` with the other saved logins.
     checks = {name: (ok, detail) for name, ok, detail in gateway_cli.doctor_checks(load(home))}
-    assert checks["connector factiq login"][0] is False
+    assert "connector factiq login" not in checks
     assert checks["FactIQ plugin files"][0] is True
-    monkeypatch.setenv("FACTIQ_API_KEY", "fiq-test-key")
-    checks = {name: ok for name, ok, _ in gateway_cli.doctor_checks(load(home))}
-    assert checks["connector factiq login"] is True
+    findings = main_module.doctor_findings(load(home), FakeRunner(), env={})
+    assert (
+        "error",
+        "FACTIQ_API_KEY is not set and not saved; run `opendot connectors login factiq`",
+    ) in findings
+    env = {"FACTIQ_API_KEY": "fiq-key"}
+    findings = main_module.doctor_findings(load(home), FakeRunner(), env=env)
+    assert any(level == "warn" and "FACTIQ_API_KEY is set here" in m for level, m in findings)
 
 
 def test_doctor_checks_a_stdio_command_and_an_oauth_token(home):

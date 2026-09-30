@@ -28,6 +28,24 @@ out of every step container:
   Slack token variable, the Claude Code login variable, the GitHub token
   variable or any connector key variable.
 
+### Saved logins
+
+`opendot login slack`, `opendot login github` and `opendot connectors login
+<name>` (for a connector with `auth = "bearer_env"`) save a token in
+`core.keys_dir` (default `~/.config/opendot/keys`). Each token is one file,
+named after its variable, with mode 600, in a folder with mode 700. When an
+`opendot` command loads its config, it sets each of these variables that is not
+set from its file. A variable that is set wins over the file.
+
+- OpenDot refuses to read a saved file that another user can read, that belongs
+  to another user or that is a symbolic link. `opendot doctor` reports it.
+- The file name must be a plain variable name, so a config value cannot point
+  the file outside the folder.
+- The saved values reach the same places as the variables do. The rules above
+  still apply: no step container gets them, and the allowlist may not name them.
+- The files are not encrypted. Anyone who can read files as your user, or as
+  root, can read them. The same is true of a line in a shell profile.
+
 The model cannot run an action by itself. It proposes actions in its JSON
 output. The host refuses unknown action kinds and builds each action's target
 from the task (not from the model's text). Then it runs the action at once. The

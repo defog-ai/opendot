@@ -39,6 +39,19 @@ a reviewer. This is a breaking change.
   file when `backend.claude_code.token_env` is not set, so the token needs no
   line in a shell profile and cron runs find it. `opendot doctor` and
   `opendot install-cron` point to the command when no login is found.
+- `opendot login slack` and `opendot login github` save the Slack bot token and
+  the GitHub token, and `opendot connectors login <name>` saves the API key of a
+  connector with `auth = "bearer_env"` (FactIQ too). Each is one file with mode
+  600 in the new folder `core.keys_dir` (default `~/.config/opendot/keys`).
+  Every `opendot` command sets a variable that is not set from its saved file,
+  so the runs that cron starts find these logins. Before, they had only the
+  variables, which cron does not get from a shell profile.
+  `opendot connectors logout <name>` deletes a saved key.
+- `opendot doctor` says for each Slack, GitHub and connector login whether it is
+  saved, only set in the current shell (a warning, because cron cannot see it),
+  or missing. `opendot install-cron` names each login that cron cannot see and
+  the command that saves it. The `github: token` doctor line is replaced by
+  this check.
 
 ## [0.2.0] - 2026-09-30
 

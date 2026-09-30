@@ -19,9 +19,9 @@ __all__ = ["doctor_checks", "register_cli"]
 
 
 def _load(args: argparse.Namespace) -> Config:
-    from opendot.config import Config
+    from opendot.key_files import load_config
 
-    return Config.load(Path(args.config) if getattr(args, "config", None) else None)
+    return load_config(Path(args.config) if getattr(args, "config", None) else None)
 
 
 def _open(args: argparse.Namespace):
@@ -118,7 +118,8 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     github = config.github
     token = github.token() if github else None
     if not token:
-        print(f"{github.token_env if github else 'the GitHub token'} is not set")
+        name = github.token_env if github else "the GitHub token"
+        print(f"{name} is not set; run `opendot login github`")
         return 1
     kinds = {PublicationKind.PULL_REQUEST, PublicationKind.ISSUE}
     changed = 0
@@ -191,15 +192,6 @@ def doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
     results: list[tuple[str, bool, str]] = []
     git_path = shutil.which("git")
     results.append(("github: git", git_path is not None, git_path or "git is not on PATH"))
-    if any(not repo.plain_git for repo in config.repositories):
-        token = github.token()
-        results.append(
-            (
-                "github: token",
-                token is not None,
-                f"{github.token_env} is set" if token else f"{github.token_env} is not set",
-            )
-        )
     if github.signing_key is not None:
         ok = Path(github.signing_key).expanduser().is_file()
         results.append(("github: signing key", ok, str(github.signing_key)))
