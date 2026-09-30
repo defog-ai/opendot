@@ -36,6 +36,15 @@ from opendot.container_contract import (
 )
 from opendot.extensions import doctor_checks as feature_doctor_checks
 from opendot.extensions import register_feature_cli
+from opendot.key_files import (
+    KeyFileError,
+    check_key,
+    key_path,
+    key_source,
+    load_config,
+    needed_keys,
+    save_key_file,
+)
 from opendot.models import (
     ActionStatus,
     Destination,
@@ -95,7 +104,7 @@ def _config_path(args: argparse.Namespace) -> Path:
 
 
 def _load(args: argparse.Namespace) -> Config:
-    return Config.load(Path(args.config) if args.config else None)
+    return load_config(Path(args.config) if args.config else None)
 
 
 def _store(config: Config) -> Store:
@@ -339,12 +348,9 @@ def doctor_findings(
     for name, ok, detail in feature_doctor_checks(config):
         found.append(("ok" if ok else "error", f"{name}: {detail}"))
 
+    found += _saved_key_findings(config, env)
     slack = config.slack
     if slack.enabled:
-        if slack.bot_token(env):
-            found.append(("ok", f"Slack token variable {slack.bot_token_env} is set"))
-        else:
-            found.append(("error", f"Slack is enabled but {slack.bot_token_env} is not set"))
         if not slack.channels:
             found.append(("warn", "channels.slack.channels is empty; nothing will be polled"))
         if not slack.allowed_users:
@@ -381,6 +387,28 @@ def _snap_findings(config: Config, runner: CommandRunner) -> list[tuple[str, str
     return [("error", f"snap Docker: {problem}") for problem in problems]
 
 
+def _saved_key_findings(config: Config, env: Mapping[str, str]) -> list[tuple[str, str]]:
+    """One finding per login that Slack, GitHub or a connector uses."""
+    found: list[tuple[str, str]] = []
+    for variable, command in needed_keys(config):
+        source, detail = key_source(config, variable, env)
+        if source == "file":
+            found.append(("ok", detail))
+        elif source == "variable":
+            found.append(
+                (
+                    "warn",
+                    f"{variable} is set here but not saved; cron does not read your shell "
+                    f"profile, so runs that cron starts may not see it. Run `{command}`",
+                )
+            )
+        elif source == "missing":
+            found.append(("error", f"{detail}; run `{command}`"))
+        else:
+            found.append(("error", detail))
+    return found
+
+
 def _claude_login_finding(config: Config, env: Mapping[str, str]) -> tuple[str, str]:
     name = config.claude_code.token_env
     token_file = config.claude_code.token_file
@@ -396,12 +424,24 @@ def _claude_login_finding(config: Config, env: Mapping[str, str]) -> tuple[str, 
 
 
 def cmd_login(args: argparse.Namespace) -> int:
-    """Save a Claude Code token in backend.claude_code.token_file.
+    """Save a login so every opendot command finds it, including runs that cron starts.
 
-    With a terminal, run `claude setup-token` so you can sign in, then ask for the
-    token it printed. Without a terminal, read the token from standard input.
+    claude: with a terminal, run `claude setup-token` so you can sign in, then ask
+    for the token it printed. slack and github: ask for the token. Without a
+    terminal, read the token from standard input.
     """
     config = _load(args)
+    if args.service == "slack":
+        return _save_login(
+            config,
+            config.slack.bot_token_env,
+            "Slack bot token",
+            prefix="xoxb-",
+        )
+    if args.service == "github":
+        if config.github is None:
+            raise CliError("the config has no [github] table")
+        return _save_login(config, config.github.token_env, "GitHub token")
     token_file = config.claude_code.token_file
     if sys.stdin.isatty():
         if not args.skip_setup:
@@ -430,6 +470,46 @@ def cmd_login(args: argparse.Namespace) -> int:
             f"{config.claude_code.token_env} is also set in this shell; when it is set, "
             "it is used instead of the saved file."
         )
+    return 0
+
+
+def read_secret(prompt: str) -> str:
+    """Ask for a secret without showing it, or read it from standard input."""
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    return sys.stdin.read()
+
+
+def save_login(config: Config, variable: str, what: str, value: str, prefix: str = "") -> Path:
+    """Check value and save it as the key file for variable. Raises CliError."""
+    try:
+        value = check_key(value, f"the {what}")
+        if prefix and not value.startswith(prefix):
+            raise KeyFileError(f"this does not look like a {what}; it starts with {prefix}")
+        path = key_path(config.core.keys_dir, variable)
+        save_key_file(path, value)
+    except KeyFileError as exc:
+        raise CliError(str(exc)) from None
+    return path
+
+
+def report_saved_login(variable: str, path: Path) -> None:
+    print(f"Saved {variable} in {path} (only you can read it).")
+    print("Every opendot command uses it, including the runs that cron starts.")
+    if os.environ.get(variable):
+        print(
+            f"{variable} is also set in this shell; when it is set, it is used instead "
+            "of the saved file."
+        )
+
+
+def _save_login(config: Config, variable: str, what: str, prefix: str = "") -> int:
+    if variable in config.keys_from_files:
+        # _load set it from the old file; the new value replaces that file.
+        os.environ.pop(variable, None)
+    value = read_secret(f"Paste the {what} (it is not shown): ")
+    path = save_login(config, variable, what, value, prefix)
+    report_saved_login(variable, path)
     return 0
 
 
@@ -808,6 +888,12 @@ def cmd_install_cron(args: argparse.Namespace) -> int:
             "Note: cron does not read your shell profile, so it cannot see "
             f"{config.claude_code.token_env}. Run `opendot login claude` to save the login."
         )
+    for variable, command in needed_keys(config):
+        if key_source(config, variable, {})[0] != "file":
+            print(
+                "Note: cron does not read your shell profile, so it cannot see "
+                f"{variable}. Run `{command}` to save it."
+            )
     return 0
 
 
@@ -850,11 +936,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("migrate", cmd_migrate)
     p = add("login", cmd_login)
-    p.add_argument("service", choices=["claude"], help="the login to save")
+    p.add_argument("service", choices=["claude", "slack", "github"], help="the login to save")
     p.add_argument(
         "--skip-setup",
         action="store_true",
-        help="do not run `claude setup-token`; only ask for a token you already have",
+        help="claude only: do not run `claude setup-token`; only ask for a token you already have",
     )
     add("doctor", cmd_doctor)
     add("build-image", cmd_build_image)

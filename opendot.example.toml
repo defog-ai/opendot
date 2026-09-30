@@ -10,6 +10,11 @@
 [core]
 # Folder for the SQLite database, run folders and logs. Created with mode 0700.
 state_root = "~/.local/state/opendot"
+# Folder for saved logins: the Slack token, the GitHub token and connector API
+# keys. `opendot login slack`, `opendot login github` and `opendot connectors
+# login <name>` write one file per variable name here, with mode 0600. A saved
+# login is used when its variable is not set, so runs that cron starts find it.
+keys_dir = "~/.config/opendot/keys"
 # Default IANA time zone for schedules that do not name one.
 timezone = "UTC"
 # How long a worker holds a task before another worker may take it over.
@@ -97,7 +102,8 @@ user = "operator"
 [channels.slack]
 # Poll Slack for requests. Needs a bot token; see slack-app-manifest.yml.
 enabled = false
-# Name of the host variable that holds the Slack bot token.
+# Name of the host variable that holds the Slack bot token. When it is not set,
+# the token saved by `opendot login slack` is used.
 bot_token_env = "OPENDOT_SLACK_BOT_TOKEN"
 # Slack channel ids to poll.
 channels = []
@@ -111,7 +117,8 @@ allowed_users = []
 # ---------------------------------------------------------------------------
 
 [github]
-# Name of the host variable that holds a GitHub token. It never enters a container.
+# Name of the host variable that holds a GitHub token. When it is not set, the
+# token saved by `opendot login github` is used. It never enters a container.
 token_env = "OPENDOT_GITHUB_TOKEN"
 # GitHub REST API address. Change it for GitHub Enterprise Server.
 api_url = "https://api.github.com"
@@ -202,7 +209,8 @@ max_result_kib = 512
 # name = "docs"
 # url = "https://mcp.example.com/mcp"
 # auth = "bearer_env"          # "none", "bearer_env" or "oauth"
-# auth_env = "DOCS_MCP_TOKEN"  # host variable with the token, for bearer_env
+# auth_env = "DOCS_MCP_TOKEN"  # host variable with the token, for bearer_env;
+#                              # `opendot connectors login docs` saves it instead
 # tools = [
 #   { name = "search", mode = "read" },
 #   { name = "create_page", mode = "write" },
@@ -218,7 +226,8 @@ max_result_kib = 512
 [factiq]
 enabled = false
 url = "https://api.factiq.com/mcp"
-# "bearer_env": a FactIQ API key in the variable named by api_key_env.
+# "bearer_env": a FactIQ API key in the variable named by api_key_env, or saved
+# by `opendot connectors login factiq`.
 # "oauth": sign in once with `opendot connectors login factiq`.
 auth = "bearer_env"
 api_key_env = "FACTIQ_API_KEY"

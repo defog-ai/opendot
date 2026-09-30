@@ -153,8 +153,9 @@ Every setting and its default is in
 
 1. Create a Slack app from [slack-app-manifest.yml](slack-app-manifest.yml) and
    install it in your workspace.
-2. Copy the bot token (it starts with `xoxb-`) and put it in a variable:
-   `export OPENDOT_SLACK_BOT_TOKEN=xoxb-...`
+2. Copy the bot token (it starts with `xoxb-`) and save it:
+   `opendot login slack`. OpenDot keeps it in a file that only you can read,
+   so the runs that cron starts find it too.
 3. Invite the bot to the channels it should read.
 4. Add this to your config file, with your own channel and user ids:
 
@@ -183,12 +184,11 @@ Each of these is off until you add one block to your config file. Run
 ### Pull requests
 
 Make a GitHub fine-grained token that can write the contents, pull requests
-and issues of one repository. Put it in a variable, for example
-`export OPENDOT_GITHUB_TOKEN=github_pat_...`. Then add:
+and issues of one repository. Save it with `opendot login github`. Then add:
 
 ```toml
 [github]
-token_env = "OPENDOT_GITHUB_TOKEN"   # the host reads it; no container gets it
+token_env = "OPENDOT_GITHUB_TOKEN"   # a set variable wins over the saved token
 
 [[repositories]]
 name = "app"
@@ -244,6 +244,7 @@ tools = [
 ```
 
 ```sh
+opendot connectors login docs  # asks for the key and saves it
 opendot connectors test docs   # checks that the tools exist on the server
 opendot connectors calls       # shows every call the model made
 ```
@@ -258,7 +259,7 @@ It is built in:
 
 ```sh
 opendot init --with-factiq    # or add [factiq] enabled = true to your config
-export FACTIQ_API_KEY=...     # or: opendot connectors login factiq
+opendot connectors login factiq   # asks for your FactIQ API key and saves it
 opendot connectors test factiq
 opendot task "How fast have US consumer prices risen since 2019?"
 ```
@@ -302,6 +303,7 @@ not.
 | --- | --- |
 | `Codex login file ... is missing` | Run `codex login`. |
 | `no Claude Code login` | Run `opendot login claude`. |
+| `... is not set and not saved`, or `... is set here but not saved` | Run the command that the message names, such as `opendot login slack`. |
 | `opencode login file ... is missing`, or `has no login for ...` | Run `opencode auth login` and choose the provider in your model name. |
 | `image ... is not built` | Run `opendot build-image`. |
 | `state folder ... has mode 775; it must be 700` | Run `chmod 700` on that folder. |
@@ -321,6 +323,7 @@ works. `opendot doctor` tells you when either setting is wrong.
 | Command | What it does |
 | --- | --- |
 | `init`, `login claude`, `doctor` | Write a config file; save the Claude login; check logins, Docker, and the image. |
+| `login slack`, `login github`, `connectors login NAME` | Save the Slack token, the GitHub token, or a connector's key, so that cron runs find them. |
 | `build-image`, `verify-image` | Build and check the container image. |
 | `task "..."` | Give it work from the terminal. |
 | `tick`, `install-cron` | Do one round of work; do a round every minute from cron. |

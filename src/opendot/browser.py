@@ -224,9 +224,9 @@ def _runner() -> CommandRunner:
 
 
 def _cmd_browser_check(args: argparse.Namespace) -> int:
-    from opendot.config import Config
+    from opendot.key_files import load_config
 
-    config = Config.load(Path(args.config) if args.config else None)
+    config = load_config(Path(args.config) if args.config else None)
     print(
         f"Starting a headless browser in {config.sandbox.image} (network {config.sandbox.network})",
         flush=True,
