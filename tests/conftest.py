@@ -326,6 +326,12 @@ class HttpMock:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_saved_logins(tmp_path_factory: pytest.TempPathFactory, monkeypatch) -> None:
+    """Point ~ at an empty folder, so a login saved on this machine never reaches a test."""
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
+
+
 @pytest.fixture
 def clock() -> FrozenClock:
     return FrozenClock()

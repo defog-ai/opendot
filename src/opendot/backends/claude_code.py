@@ -13,9 +13,10 @@ Sessions: a new step picks its session id up front with --session-id, so its
 host folder can be created before the container starts. A resumed step passes
 --resume with the id from the earlier StepResult.
 
-The login is the host variable named by backend.claude_code.token_env. Its value
-reaches the container only through the environment of the docker process
-(a bare `--env NAME`), never through the command line.
+The login is the host variable named by backend.claude_code.token_env or, when
+that is not set, the file backend.claude_code.token_file that `opendot login
+claude` writes. The token reaches the container only through the environment of
+the docker process (a bare `--env NAME`), never through the command line.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from opendot.backends import (
     StepTimedOut,
     SubprocessRunner,
 )
+from opendot.claude_login import TokenFileError, read_token_file
 from opendot.models import McpServerSpec, Mount, Step, StepPlan, StepResult
 from opendot.proc import Deadline, LineReader
 from opendot.redact import redact, write_redacted
@@ -165,13 +167,19 @@ class ClaudeCodeBackend:
         return cls(config, role, runner)
 
     def _login(self) -> tuple[str, str]:
-        token_env = self.config.claude_code.token_env
-        value = self.host_env.get(token_env, "")
+        """The container variable name and the token: from token_env, else from token_file."""
+        settings = self.config.claude_code
+        value = self.host_env.get(settings.token_env, "")
+        if not value:
+            try:
+                value = read_token_file(settings.token_file) or ""
+            except (TokenFileError, OSError) as exc:
+                raise BackendError(f"cannot read the saved Claude login: {exc}") from None
         if not value:
             raise BackendError(
-                f"{token_env} is not set; run `claude setup-token` on the host and export it"
+                f"no Claude login: run `opendot login claude`, or set {settings.token_env}"
             )
-        return container_token_variable(token_env, value), value
+        return container_token_variable(settings.token_env, value), value
 
     def run_step(
         self,

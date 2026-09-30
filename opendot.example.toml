@@ -58,6 +58,9 @@ auth_file = "~/.codex/auth.json"
 # Name of the host variable that holds the Claude Code token (from
 # `claude setup-token`) or an API key. It is given only to the backend process.
 token_env = "CLAUDE_CODE_OAUTH_TOKEN"
+# The file that `opendot login claude` writes. It is read when the variable above
+# is not set, so the token needs no line in your shell profile and cron finds it.
+token_file = "~/.config/opendot/claude-token"
 
 [backend.opencode]
 # The opencode login file (from `opencode auth login`). Only the login for the

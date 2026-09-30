@@ -94,9 +94,12 @@ A step needs the login of its own CLI:
   stays valid. It does this only when the new file has the same `auth_mode`,
   the same API key field and the same `tokens.account_id`, and your own file
   did not change during the step. Otherwise the new file is deleted.
-- **Claude Code:** OpenDot passes the variable named in
-  `backend.claude_code.token_env` (default `CLAUDE_CODE_OAUTH_TOKEN`) into the
-  container.
+- **Claude Code:** OpenDot passes the token into the container. It takes the
+  token from the variable named in `backend.claude_code.token_env` (default
+  `CLAUDE_CODE_OAUTH_TOKEN`) or, when that variable is not set, from the file
+  `backend.claude_code.token_file` (default `~/.config/opendot/claude-token`)
+  that `opendot login claude` writes with mode 600. OpenDot refuses to read
+  that file when another user can read it or when it is a symbolic link.
 - **opencode:** OpenDot copies only the entry for the provider in the model
   name from your opencode login file (`backend.opencode.auth_file`) into the
   session folder, and deletes it when the step ends. A refreshed OAuth login is

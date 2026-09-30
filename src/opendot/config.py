@@ -116,7 +116,10 @@ DEFAULTS: dict[str, Any] = {
         "worker": {"kind": "codex", "model": ""},
         "reviewer": {"kind": "claude_code", "model": ""},
         "codex": {"auth_file": "~/.codex/auth.json"},
-        "claude_code": {"token_env": "CLAUDE_CODE_OAUTH_TOKEN"},
+        "claude_code": {
+            "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
+            "token_file": "~/.config/opendot/claude-token",
+        },
         "opencode": {"auth_file": "~/.local/share/opencode/auth.json"},
         "fake": {"script": ""},
     },
@@ -322,6 +325,7 @@ class CodexConfig:
 @dataclass(frozen=True)
 class ClaudeCodeConfig:
     token_env: str  # host variable holding the token; passed only to the backend process
+    token_file: Path  # saved by `opendot login claude`; read when token_env is not set
 
 
 @dataclass(frozen=True)
@@ -808,7 +812,10 @@ def _build(data: dict[str, Any], source_path: Path | None) -> Config:
         worker_backend=choices["worker"],
         reviewer_backend=choices["reviewer"],
         codex=CodexConfig(auth_file=_expand(backend["codex"]["auth_file"])),
-        claude_code=ClaudeCodeConfig(token_env=backend["claude_code"]["token_env"]),
+        claude_code=ClaudeCodeConfig(
+            token_env=backend["claude_code"]["token_env"],
+            token_file=_expand(backend["claude_code"]["token_file"]),
+        ),
         opencode=OpencodeConfig(auth_file=_expand(backend["opencode"]["auth_file"])),
         fake=FakeBackendConfig(script=_expand(fake_script) if fake_script else None),
         sandbox=SandboxConfig(

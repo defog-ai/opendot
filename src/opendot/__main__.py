@@ -10,12 +10,14 @@ here is the operator: channel "cli", actor config.cli.user.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,7 @@ from opendot.actions import KIND_NOTIFY, KIND_REPLY, build_registry
 from opendot.approvals import NotAllowedToDecide
 from opendot.backends import BackendError, CommandRunner, SubprocessRunner
 from opendot.channels import ChannelError, enabled_channels
+from opendot.claude_login import TokenFileError, read_token_file, save_token_file
 from opendot.config import CONFIG_ENV, DEFAULT_CONFIG_PATH, Config, ConfigError
 from opendot.container_contract import (
     build_image_args,
@@ -315,17 +318,7 @@ def doctor_findings(
         else:
             found.append(("error", f"Codex login file {auth} is missing; run `codex login`"))
     if "claude_code" in kinds:
-        name = config.claude_code.token_env
-        if env.get(name):
-            found.append(("ok", f"Claude Code token variable {name} is set"))
-        else:
-            found.append(
-                (
-                    "error",
-                    f"{name} is not set; create a token with `claude setup-token` "
-                    "or use an API key",
-                )
-            )
+        found.append(_claude_login_finding(config, env))
     if "opencode" in kinds:
         auth = config.opencode.auth_file
         providers = sorted(
@@ -426,6 +419,58 @@ def _snap_findings(config: Config, runner: CommandRunner) -> list[tuple[str, str
             )
         ]
     return [("error", f"snap Docker: {problem}") for problem in problems]
+
+
+def _claude_login_finding(config: Config, env: Mapping[str, str]) -> tuple[str, str]:
+    name = config.claude_code.token_env
+    token_file = config.claude_code.token_file
+    try:
+        saved = read_token_file(token_file)
+    except (TokenFileError, OSError) as exc:
+        return ("error", f"cannot read the saved Claude login: {exc}")
+    if env.get(name):
+        return ("ok", f"Claude Code token variable {name} is set")
+    if saved:
+        return ("ok", f"Claude Code login saved in {token_file}")
+    return ("error", "no Claude Code login; run `opendot login claude`")
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Save a Claude Code token in backend.claude_code.token_file.
+
+    With a terminal, run `claude setup-token` so you can sign in, then ask for the
+    token it printed. Without a terminal, read the token from standard input.
+    """
+    config = _load(args)
+    token_file = config.claude_code.token_file
+    if sys.stdin.isatty():
+        if not args.skip_setup:
+            print("Running `claude setup-token`. Sign in, then copy the token it prints.")
+            try:
+                code = subprocess.run(["claude", "setup-token"], check=False).returncode
+            except FileNotFoundError:
+                raise CliError(
+                    "the `claude` command is not installed on this machine; install Claude "
+                    "Code, or make a token on another machine and run "
+                    "`opendot login claude --skip-setup`"
+                ) from None
+            if code != 0:
+                raise CliError(f"`claude setup-token` ended with exit code {code}")
+        token = getpass.getpass("Paste the token (it is not shown): ")
+    else:
+        token = sys.stdin.read()
+    try:
+        save_token_file(token_file, token)
+    except TokenFileError as exc:
+        raise CliError(str(exc)) from None
+    print(f"Saved the Claude login in {token_file} (only you can read it).")
+    print("Every opendot command uses it, including the runs that cron starts.")
+    if os.environ.get(config.claude_code.token_env):
+        print(
+            f"{config.claude_code.token_env} is also set in this shell; when it is set, "
+            "it is used instead of the saved file."
+        )
+    return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -883,6 +928,12 @@ def cmd_install_cron(args: argparse.Namespace) -> int:
     cron.write_crontab(runner, cron.with_block(current, line))
     print("Installed:")
     print(line)
+    kinds = {config.worker_backend.kind, config.reviewer_backend.kind}
+    if "claude_code" in kinds and _claude_login_finding(config, {})[0] != "ok":
+        print(
+            "Note: cron does not read your shell profile, so it cannot see "
+            f"{config.claude_code.token_env}. Run `opendot login claude` to save the login."
+        )
     return 0
 
 
@@ -928,6 +979,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="replace an existing config file")
 
     add("migrate", cmd_migrate)
+    p = add("login", cmd_login)
+    p.add_argument("service", choices=["claude"], help="the login to save")
+    p.add_argument(
+        "--skip-setup",
+        action="store_true",
+        help="do not run `claude setup-token`; only ask for a token you already have",
+    )
     add("doctor", cmd_doctor)
     add("build-image", cmd_build_image)
     add("verify-image", cmd_verify_image)

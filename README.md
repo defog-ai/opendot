@@ -40,7 +40,7 @@ account.
 
 | If you pay for | OpenDot runs | Log in once with |
 | --- | --- | --- |
-| Claude Pro or Max | Claude Code | `claude setup-token` |
+| Claude Pro or Max | Claude Code | `opendot login claude` |
 | ChatGPT Plus, Pro, Business or Enterprise | Codex | `codex login` |
 | OpenRouter, an opencode plan, or another provider that opencode supports | opencode | `opencode auth login` |
 | Nous Portal, or another provider that Hermes supports | Hermes Agent | not supported yet |
@@ -133,12 +133,14 @@ that you chose:
 ```sh
 codex login
 opencode auth login
-claude setup-token          # prints a token; then:
-export CLAUDE_CODE_OAUTH_TOKEN=paste-the-token-here
+opendot login claude
 ```
 
-Put the `export` line in your shell profile (for example `~/.bashrc`), so it is
-set every time.
+`opendot login claude` runs `claude setup-token`, which opens a browser page
+where you sign in. It then asks you to paste the token that was printed, and
+saves it in `~/.config/opendot/claude-token`. Only you can read that file.
+Every `opendot` command reads it, including the runs that cron starts, so you
+do not add anything to your shell profile.
 
 **5. Check everything.**
 
@@ -318,7 +320,7 @@ not.
 | You see | Do this |
 | --- | --- |
 | `Codex login file ... is missing` | Run `codex login`. |
-| `CLAUDE_CODE_OAUTH_TOKEN is not set` | Run `claude setup-token`, then `export CLAUDE_CODE_OAUTH_TOKEN=...`. |
+| `no Claude Code login` | Run `opendot login claude`. |
 | `opencode login file ... is missing`, or `has no login for ...` | Run `opencode auth login` and choose the provider in your model name. |
 | `image ... is not built` | Run `opendot build-image`. |
 | `state folder ... has mode 775; it must be 700` | Run `chmod 700` on that folder. |

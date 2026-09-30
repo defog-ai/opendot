@@ -6,6 +6,7 @@ here needs Docker, a model login, crontab or the network.
 
 from __future__ import annotations
 
+import io
 import json
 import stat
 from pathlib import Path
@@ -68,7 +69,7 @@ def test_every_command_has_a_summary_and_a_parser():
     parser = cli.build_parser()
     sub = next(a for a in parser._actions if a.dest == "command")
     assert set(sub.choices) == set(help.COMMANDS)
-    assert len(help.COMMANDS) == 24
+    assert len(help.COMMANDS) == 25
 
 
 def test_help_lists_the_demo(capsys):
@@ -329,7 +330,7 @@ def test_doctor_reports_missing_logins_and_image(home, capsys, monkeypatch):
     findings = cli.doctor_findings(config, runner, env={})
     errors = [message for level, message in findings if level == "error"]
     assert any("Codex login file" in m for m in errors)
-    assert any(config.claude_code.token_env in m for m in errors)
+    assert any("opendot login claude" in m for m in errors)
     assert any("build-image" in m for m in errors)
     assert any("network" in m for level, m in findings if level == "warn")
 
@@ -418,3 +419,46 @@ def test_with_block_replaces_an_old_block():
     second = cron.with_block(first, "* * * * * new")
     assert "old" not in second
     assert second.count(cron.BLOCK_BEGIN) == 1
+
+
+# ---------------------------------------------------------------------------
+# login
+# ---------------------------------------------------------------------------
+
+CLAUDE_TOKEN = "sk-ant-oat01-" + "t" * 48
+
+
+def test_login_claude_saves_the_token_from_stdin(home, capsys, monkeypatch):
+    run(home, "init", "--state-root", str(home / "state"))
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr("sys.stdin", io.StringIO(CLAUDE_TOKEN + "\n"))
+    capsys.readouterr()
+    assert run(home, "login", "claude") == 0
+    token_file = load(home).claude_code.token_file
+    assert token_file.read_text() == CLAUDE_TOKEN + "\n"
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+    assert str(token_file) in capsys.readouterr().out
+    findings = cli.doctor_findings(load(home), FakeRunner(), env={})
+    assert ("ok", f"Claude Code login saved in {token_file}") in findings
+
+
+def test_login_claude_refuses_text_that_is_not_a_token(home, capsys, monkeypatch):
+    run(home, "init", "--state-root", str(home / "state"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("hello world\n"))
+    assert run(home, "login", "claude") == 1
+    assert "space" in capsys.readouterr().err
+    assert not load(home).claude_code.token_file.exists()
+
+
+def test_doctor_names_the_login_command_when_no_claude_login_exists(home):
+    run(home, "init", "--state-root", str(home / "state"))
+    findings = cli.doctor_findings(load(home), FakeRunner(), env={})
+    assert ("error", "no Claude Code login; run `opendot login claude`") in findings
+
+
+def test_install_cron_tells_you_to_save_the_claude_login(home, capsys, monkeypatch):
+    run(home, "init", "--state-root", str(home / "state"))
+    monkeypatch.setattr(cli, "_runner", lambda: FakeRunner())
+    capsys.readouterr()
+    assert run(home, "install-cron") == 0
+    assert "opendot login claude" in capsys.readouterr().out

@@ -14,6 +14,7 @@ DESCRIPTION = (
 COMMANDS: dict[str, str] = {
     "init": "write a config file and create the state folder",
     "migrate": "create or update the SQLite database",
+    "login": "save a login so you need no line in your shell profile (Claude Code)",
     "doctor": "check the config, the logins, Docker and the image",
     "build-image": "build the worker image from the packaged Dockerfile",
     "verify-image": "check that the worker image has every tool and runs as non-root",
@@ -48,7 +49,7 @@ Getting started without any model login (scripted fake backend):
 With real backends:
   opendot init                 # Codex worker, Claude Code reviewer
   opendot build-image
-  codex login                  # and/or: export CLAUDE_CODE_OAUTH_TOKEN=...
+  codex login                  # and/or: opendot login claude
   opendot doctor
   opendot task "..."
   opendot tick                 # or: opendot install-cron

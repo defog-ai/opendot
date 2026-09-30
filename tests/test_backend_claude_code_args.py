@@ -19,6 +19,7 @@ from opendot.backends.claude_code import (
     claude_args,
     container_token_variable,
 )
+from opendot.claude_login import save_token_file
 from opendot.config import Config, ConfigError
 from opendot.models import Step
 
@@ -34,7 +35,10 @@ def make_config(
             "core": {"state_root": str(tmp_path / "state")},
             "backend": {
                 "reviewer": {"kind": "claude_code", "model": ""},
-                "claude_code": {"token_env": token_env},
+                "claude_code": {
+                    "token_env": token_env,
+                    "token_file": str(tmp_path / "claude-token"),
+                },
             },
             "sandbox": sandbox,
         },
@@ -180,7 +184,35 @@ def test_api_key_login(tmp_path: Path) -> None:
 def test_missing_token_is_a_clear_error(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     docker = FakeDocker()
-    with pytest.raises(BackendError, match="CLAUDE_CODE_OAUTH_TOKEN is not set"):
+    with pytest.raises(BackendError, match="run `opendot login claude`"):
+        backend(cfg, docker, host_env={}).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
+    assert docker.spawned == []
+
+
+def test_saved_token_file_is_the_login_when_the_variable_is_not_set(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    save_token_file(cfg.claude_code.token_file, TOKEN)
+    docker = FakeDocker()
+    run_new(cfg, docker, host_env={})
+    process = docker.spawned[0]
+    assert process.env == {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+    assert TOKEN not in " ".join(process.args)
+
+
+def test_the_variable_wins_over_the_saved_file(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    save_token_file(cfg.claude_code.token_file, "sk-ant-oat01-" + "f" * 48)
+    docker = FakeDocker()
+    run_new(cfg, docker)
+    assert docker.spawned[0].env == {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN}
+
+
+def test_a_token_file_others_can_read_is_refused(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    save_token_file(cfg.claude_code.token_file, TOKEN)
+    os.chmod(cfg.claude_code.token_file, 0o644)
+    docker = FakeDocker()
+    with pytest.raises(BackendError, match="chmod 600"):
         backend(cfg, docker, host_env={}).run_step(Step.REVIEW, "p", SCHEMA, {}, [])
     assert docker.spawned == []
 

@@ -6,6 +6,15 @@ All notable changes to OpenDot are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `opendot login claude` runs `claude setup-token`, asks for the token and saves
+  it in `backend.claude_code.token_file` (default
+  `~/.config/opendot/claude-token`, mode 600). The Claude Code backend reads the
+  file when `backend.claude_code.token_env` is not set, so the token needs no
+  line in a shell profile and cron runs find it. `opendot doctor` and
+  `opendot install-cron` point to the command when no login is found.
+
 ## [0.2.0] - 2026-09-30
 
 Pull requests, a built-in browser and MCP connectors, each off by default. The
