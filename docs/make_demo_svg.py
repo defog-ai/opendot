@@ -110,11 +110,6 @@ def hint(y, number, t_in, t_out):
     )
 
 
-def note(y, label, t_in, t_out):
-    cls = timed(t_in, t_out, slide=False)
-    body.append(f'<g class="{cls}">' + text(84, y, label, 12, MUTED, 600) + "</g>")
-
-
 def divider(y, label, t_in, t_out):
     cls = timed(t_in, t_out, slide=False)
     body.append(
@@ -135,7 +130,6 @@ message(
     0.4,
     S1_END,
 )
-note(151, "ON YOUR MACHINE, IN A LOCKED-DOWN CONTAINER", 1.4, S1_END)
 status(174, "cloning acme/web", 1.6, S1_END, 2.2, "done")
 status(200, "editing forms/signup.py, adding a test", 2.4, S1_END, 3.4, "done")
 status(226, "running the test suite", 3.6, S1_END, 4.6, "212 passed")
@@ -166,7 +160,6 @@ message(
     S2 + 0.3,
     S2_END,
 )
-note(151, "ON YOUR MACHINE, IN A LOCKED-DOWN CONTAINER", S2 + 1.2, S2_END)
 status(174, "opening the page in Chrome", S2 + 1.4, S2_END, S2 + 2.2, "done")
 status(200, "reading the pricing table", S2 + 2.4, S2_END, S2 + 3.2, "done")
 status(226, "second model reviews the schedule", S2 + 3.4, S2_END, S2 + 4.2, "approved")
