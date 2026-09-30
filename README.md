@@ -96,35 +96,11 @@ model = "gpt-5.5"
 The free `opencode/...` models work only inside opencode's own app. Pick a
 model from a provider that you logged in to with `opencode auth login`.
 
-## Try it in one minute
-
-This demo needs no login and no Docker. A scripted fake model answers, so you
-can see a whole task go through: work, review, reply.
-
-```sh
-uv tool install git+https://github.com/defog-ai/opendot
-mkdir opendot-demo && cd opendot-demo
-opendot --config ./opendot.toml init --demo --state-root ./state
-opendot --config ./opendot.toml task "What can you do?"
-opendot --config ./opendot.toml run-once
-opendot --config ./opendot.toml status
-```
-
-The last command prints:
-
-```text
-Tasks: done 1
-#1 done              operator: What can you do?
-    answer: Hello. This answer comes from the scripted fake backend, so no model ran. ...
-```
-
-`opendot --config ./opendot.toml show 1` shows every step and every decision.
-
 ## Set it up for real
 
 You need:
 
-- Linux. macOS may work but is not tested.
+- Linux or macOS.
 - Python 3.11 or newer, and [uv](https://docs.astral.sh/uv/).
 - Docker.
 - A login for at least one tool from the table above.
